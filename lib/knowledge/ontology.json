@@ -1,0 +1,326 @@
+{
+    "diseases": {
+        "HF": [
+            "heart failure",
+            "hfref",
+            "hfpef",
+            "congestive heart failure",
+            "chf",
+            "left ventricular dysfunction",
+            "cardiomyopathy",
+            "cardiac failure"
+        ],
+        "AF": [
+            "atrial fibrillation",
+            "afib",
+            "af",
+            "atrial flutter",
+            "arrhythmia"
+        ],
+        "CAD": [
+            "coronary artery disease",
+            "cad",
+            "coronary heart disease",
+            "ischemic heart disease",
+            "myocardial infarction",
+            "mi",
+            "acs",
+            "acute coronary syndrome"
+        ],
+        "HTN": [
+            "hypertension",
+            "high blood pressure",
+            "htn",
+            "elevated bp"
+        ],
+        "DM": [
+            "diabetes",
+            "diabetes mellitus",
+            "dm",
+            "t2dm",
+            "type 2 diabetes",
+            "t1dm",
+            "type 1 diabetes",
+            "diabetic"
+        ],
+        "CKD": [
+            "chronic kidney disease",
+            "ckd",
+            "renal failure",
+            "kidney failure",
+            "esrd",
+            "nephropathy",
+            "estimated glomerular filtration rate",
+            "egfr"
+        ],
+        "COPD": [
+            "copd",
+            "chronic obstructive pulmonary disease",
+            "emphysema",
+            "chronic bronchitis"
+        ],
+        "ASTHMA": [
+            "asthma",
+            "asthmatic",
+            "bronchospasm",
+            "wheezing"
+        ],
+        "PNA": [
+            "pneumonia",
+            "pna",
+            "cap",
+            "hap",
+            "vap",
+            "lung infection"
+        ],
+        "SEPSIS": [
+            "sepsis",
+            "septic shock",
+            "septicemia",
+            "bacteremia",
+            "infection"
+        ],
+        "STROKE": [
+            "stroke",
+            "cva",
+            "cerebrovascular accident",
+            "tia",
+            "transient ischemic attack"
+        ],
+        "VTE": [
+            "vte",
+            "venous thromboembolism",
+            "pe",
+            "pulmonary embolism",
+            "dvt",
+            "deep vein thrombosis"
+        ],
+        "LUNG_CANCER": [
+            "lung cancer",
+            "nsclc",
+            "sclc",
+            "lung neoplasm",
+            "lung tumor",
+            "lung carcinoma"
+        ],
+        "EGFR_MUTATION": [
+            "egfr",
+            "epidermal growth factor receptor",
+            "exon 20",
+            "exon 19",
+            "l858r",
+            "t790m"
+        ],
+        "IBD": [
+            "ibd",
+            "inflammatory bowel disease",
+            "crohn",
+            "ulcerative colitis",
+            "uc"
+        ],
+        "ULCERATIVE_COLITIS": [
+            "ulcerative colitis",
+            "uc",
+            "colitis"
+        ],
+        "CROHNS": [
+            "crohn",
+            "crohn's disease",
+            "regional enteritis"
+        ],
+        "CDI": [
+            "cdi",
+            "c. diff",
+            "clostridioides difficile",
+            "clostridium difficile",
+            "pseudomembranous colitis"
+        ],
+        "EOSINOPHILIC": [
+            "eosinophilic",
+            "eosinophilia",
+            "high eosinophils"
+        ],
+        "MULTIPLE_MYELOMA": [
+            "multiple myeloma",
+            "myeloma",
+            "plasma cell myeloma",
+            "mm",
+            "plasmacytoma",
+            "monoclonal gammopathy"
+        ],
+        "MELANOMA": [
+            "melanoma",
+            "malignant melanoma",
+            "cutaneous melanoma",
+            "metastatic melanoma",
+            "braf",
+            "v600e",
+            "v600k"
+        ],
+        "THYROID_CANCER": [
+            "thyroid cancer",
+            "thyroid carcinoma",
+            "medullary thyroid",
+            "mtc",
+            "papillary thyroid",
+            "ret mutation",
+            "vandetanib"
+        ],
+        "BREAST_CANCER": [
+            "breast cancer",
+            "breast carcinoma",
+            "her2",
+            "triple negative",
+            "er positive",
+            "hormone receptor"
+        ],
+        "PROSTATE_CANCER": [
+            "prostate cancer",
+            "prostate carcinoma",
+            "castration resistant",
+            "crpc",
+            "psa"
+        ]
+    },
+    "decisions": {
+        "drug_choice": [
+            "which drug",
+            "preferred agent",
+            "first-line",
+            "drug of choice",
+            "optimal",
+            "best",
+            "recommended",
+            "recommendation",
+            "foundation"
+        ],
+        "dose": [
+            "dose",
+            "dosage",
+            "titration",
+            "loading dose",
+            "maintenance",
+            "frequency"
+        ],
+        "duration": [
+            "duration",
+            "how long",
+            "course",
+            "length of therapy"
+        ],
+        "alternative": [
+            "alternative",
+            "second-line",
+            "if allergic",
+            "intolerant",
+            "failure"
+        ],
+        "monitoring": [
+            "monitoring",
+            "monitor",
+            "lab",
+            "test",
+            "follow-up",
+            "check"
+        ],
+        "diagnosis": [
+            "diagnosis",
+            "criteria",
+            "diagnostic",
+            "workup",
+            "rule out"
+        ],
+        "screening": [
+            "screening",
+            "screen",
+            "surveillance",
+            "detection"
+        ],
+        "risk_stratification": [
+            "risk",
+            "stratification",
+            "score",
+            "grade",
+            "stage",
+            "prognosis"
+        ],
+        "therapy": [
+            "therapy",
+            "treatment",
+            "management",
+            "intervention",
+            "regimen",
+            "protocol",
+            "pharmacologic"
+        ],
+        "biologic_therapy": [
+            "biologic",
+            "mab",
+            "monoclonal",
+            "antibody",
+            "inhibitor",
+            "blocker",
+            "anti-tnf",
+            "anti-integrin",
+            "jak inhibitor"
+        ],
+        "asthma_biologics": [
+            "dupilumab",
+            "mepolizumab",
+            "benralizumab",
+            "omalizumab",
+            "reslizumab",
+            "tezepelumab"
+        ],
+        "ibd_biologics": [
+            "vedolizumab",
+            "ustekinumab",
+            "infliximab",
+            "adalimumab",
+            "golimumab",
+            "certolizumab",
+            "natalizumab",
+            "risankizumab",
+            "upadacitinib",
+            "tofacitinib",
+            "ozanimod"
+        ],
+        "nsclc_targeted": [
+            "amivantamab",
+            "mobocertinib",
+            "osimertinib",
+            "lazertinib",
+            "sunvozertinib",
+            "furmonertinib",
+            "rybrevant",
+            "exkivity",
+            "tagrisso"
+        ],
+        "chemotherapy": [
+            "chemotherapy",
+            "chemo",
+            "cytotoxic",
+            "platinum-based",
+            "carboplatin",
+            "cisplatin",
+            "paclitaxel",
+            "docetaxel"
+        ],
+        "combination_therapy": [
+            "combination",
+            "combined",
+            "plus",
+            "with",
+            "and",
+            "sequential",
+            "concurrent"
+        ],
+        "resistance": [
+            "resistance",
+            "resistant",
+            "refractory",
+            "progression",
+            "failure"
+        ]
+    }
+}

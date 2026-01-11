@@ -1,0 +1,15 @@
+# Python dependencies for Arize Phoenix observability
+# Install with: pip install -r requirements.txt
+
+# Core Phoenix (Open Source)
+arize-phoenix>=4.0.0
+
+# Web server for Phoenix UI
+fastapi
+uvicorn
+
+# Data handling for evaluations
+pandas
+
+# Google GenAI for evaluation (uses existing GEMINI_API_KEY)
+google-genai

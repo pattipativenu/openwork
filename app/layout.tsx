@@ -1,0 +1,53 @@
+import type { Metadata } from "next";
+import { Inter, Lora, Playfair_Display } from "next/font/google";
+import "./globals.css";
+
+// Using Inter as the primary sans-serif font (replaces Geist)
+const geistSans = Inter({
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
+});
+
+// Using Inter for monospace as well (replaces Geist_Mono)
+const geistMono = Inter({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
+  weight: ["400", "500"],
+});
+
+const inter = Inter({
+  variable: "--font-inter",
+  subsets: ["latin"],
+});
+
+const lora = Lora({
+  variable: "--font-lora",
+  subsets: ["latin"],
+});
+
+const playfair = Playfair_Display({
+  variable: "--font-playfair",
+  subsets: ["latin"],
+});
+
+export const metadata: Metadata = {
+  title: "MedGuidance AI - Evidence-Based Medical Insights",
+  description: "Advanced medical AI assistant providing evidence-based clinical information through Doctor Mode for healthcare professionals and General Mode for consumers.",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="en" suppressHydrationWarning>
+      <body
+        className={`${geistSans.variable} ${geistMono.variable} ${inter.variable} ${lora.variable} ${playfair.variable} antialiased`}
+        suppressHydrationWarning
+      >
+        {children}
+      </body>
+    </html>
+  );
+}
