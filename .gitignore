@@ -54,3 +54,8 @@ __pycache__/
 
 # test response files
 response_*.json
+
+# documentation files (not for GitHub)
+lib/evidence/EUROPE_PMC.md
+lib/evidence/HALLUCINATION_DETECTION.md
+lib/evidence/LANDMARK_TRIALS.md
