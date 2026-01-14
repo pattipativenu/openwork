@@ -133,6 +133,89 @@ function extractDrugNamesFromQuery(query: string): string[] {
   const drugNames: string[] = [];
   const queryLower = query.toLowerCase();
 
+  // CRITICAL FIX: Brand Name to Generic Name mapping
+  // This ensures queries like "What is Tylenol?" find the correct DailyMed entry
+  const BRAND_TO_GENERIC: Record<string, string> = {
+    // Pain/OTC
+    'tylenol': 'acetaminophen',
+    'advil': 'ibuprofen',
+    'motrin': 'ibuprofen',
+    'aleve': 'naproxen',
+    'excedrin': 'acetaminophen',
+    'bayer': 'aspirin',
+    // Statins
+    'lipitor': 'atorvastatin',
+    'crestor': 'rosuvastatin',
+    'zocor': 'simvastatin',
+    'pravachol': 'pravastatin',
+    // PPIs
+    'nexium': 'esomeprazole',
+    'prilosec': 'omeprazole',
+    'prevacid': 'lansoprazole',
+    'protonix': 'pantoprazole',
+    // Psychiatric
+    'prozac': 'fluoxetine',
+    'zoloft': 'sertraline',
+    'lexapro': 'escitalopram',
+    'xanax': 'alprazolam',
+    'ambien': 'zolpidem',
+    'ativan': 'lorazepam',
+    // Anticoagulants
+    'eliquis': 'apixaban',
+    'xarelto': 'rivaroxaban',
+    'pradaxa': 'dabigatran',
+    'savaysa': 'edoxaban',
+    'coumadin': 'warfarin',
+    // Diabetes SGLT2i
+    'jardiance': 'empagliflozin',
+    'farxiga': 'dapagliflozin',
+    'invokana': 'canagliflozin',
+    // Diabetes GLP-1
+    'ozempic': 'semaglutide',
+    'wegovy': 'semaglutide',
+    'trulicity': 'dulaglutide',
+    'victoza': 'liraglutide',
+    'mounjaro': 'tirzepatide',
+    'zepbound': 'tirzepatide',
+    // Heart Failure
+    'entresto': 'sacubitril/valsartan',
+    // Blood Pressure
+    'norvasc': 'amlodipine',
+    'zestril': 'lisinopril',
+    'prinivil': 'lisinopril',
+    'diovan': 'valsartan',
+    'cozaar': 'losartan',
+    'toprol': 'metoprolol',
+    'lopressor': 'metoprolol',
+    // Thyroid
+    'synthroid': 'levothyroxine',
+    // Respiratory
+    'ventolin': 'albuterol',
+    'proair': 'albuterol',
+    'advair': 'fluticasone/salmeterol',
+    'symbicort': 'budesonide/formoterol',
+    // Antibiotics
+    'augmentin': 'amoxicillin/clavulanate',
+    'zithromax': 'azithromycin',
+    'zpack': 'azithromycin',
+    'z-pack': 'azithromycin',
+    'cipro': 'ciprofloxacin',
+    'levaquin': 'levofloxacin',
+    // Other common
+    'lasix': 'furosemide',
+    'neurontin': 'gabapentin',
+    'lyrica': 'pregabalin',
+    'humira': 'adalimumab',
+  };
+
+  // Step 1: Check for brand names and add their generic equivalents
+  for (const [brand, generic] of Object.entries(BRAND_TO_GENERIC)) {
+    if (queryLower.includes(brand)) {
+      drugNames.push(generic);
+      console.log(`💊 Brand name "${brand}" detected → adding generic "${generic}"`);
+    }
+  }
+
   // Common drug patterns and known drugs
   // EXPANDED: Added oncology (TKIs, mAbs), diabetes (SGLT2i, GLP-1), biologics, anticoagulants
   const commonDrugs = [

@@ -3,9 +3,10 @@ import { openai, OPENAI_MODELS } from "@/lib/openai";
 import { withChatSpan, withToolSpan, captureTokenUsage, generateSessionId, type StreamingSpanResult, type Span } from "@/lib/otel";
 import { getDoctorModePromptSimplified } from "@/lib/prompts/doctor-mode-prompt-simplified";
 import { getGeneralModePrompt } from "@/lib/prompts/general-mode-prompt";
+import { getStudyModePrompt } from "@/lib/prompts/study-mode-prompt";
 import { extractDrugNames } from "@/lib/api/chat-helpers";
 import { gatherEvidence, formatEvidenceForPrompt } from '@/lib/evidence/engine';
-import { retrieveMedicalImages, formatMedicalImages } from '@/lib/medical-image-retriever';
+// import { retrieveMedicalImages, formatMedicalImages } from '@/lib/medical-image-retriever';
 import { retrieveGeneralModeImages, formatGeneralModeImages } from '@/lib/general-mode-image-retriever';
 import { generateTagsFromQuery } from "@/lib/evidence/pico-extractor";
 import { generateHallucinationReport } from '@/lib/evidence/hallucination-detector';
@@ -20,7 +21,7 @@ interface ChatMessage {
 
 export async function POST(request: NextRequest) {
   try {
-    const { messages, mode, files, sessionId: clientSessionId } = await request.json();
+    const { messages, mode, files, sessionId: clientSessionId, isStudyMode } = await request.json();
     const message = messages && messages.length > 0 ? messages[messages.length - 1].content : '';
 
     // Use client-provided session ID or generate new one
@@ -37,7 +38,7 @@ export async function POST(request: NextRequest) {
         span.setAttribute('chat.session_id', sessionId);
 
         // Build the response but pass span controls for stream lifecycle
-        return await handleChatRequest(messages, mode, files, span, sessionId);
+        return await handleChatRequest(messages, mode, files, span, sessionId, isStudyMode);
       },
       { manualLifecycle: true }
     ) as StreamingSpanResult<Response>;
@@ -56,7 +57,8 @@ async function handleChatRequest(
   mode: string,
   files: string[] | undefined,
   span: Span,
-  sessionId: string
+  sessionId: string,
+  isStudyMode: boolean = false
 ): Promise<Response> {
   try {
     if (!process.env.OPENAI_API_KEY) {
@@ -97,8 +99,10 @@ async function handleChatRequest(
       withToolSpan("image-retrieval", "medical", async (toolSpan) => {
         try {
           if (mode === 'doctor') {
-            const images = await retrieveMedicalImages(message, 'doctor', picoTags);
-            medicalImages = formatMedicalImages(images);
+            // DISABLED: Doctor Mode no longer displays images per user request
+            // Images were often irrelevant and distracted from the clinical answer
+            medicalImages = [];
+            console.log('📷 Doctor Mode images disabled - returning empty array');
           } else {
             const images = await retrieveGeneralModeImages(message, healthTopic);
             medicalImages = formatGeneralModeImages(images);
@@ -133,9 +137,16 @@ async function handleChatRequest(
     const hasFiles = Boolean(files && files.length > 0);
     const hasImages = Boolean(hasFiles && files?.some((f) => f.startsWith("data:image/")));
 
-    const systemPrompt = mode === "doctor"
-      ? getDoctorModePromptSimplified(hasFiles, hasImages)
-      : getGeneralModePrompt();
+    // Select system prompt based on mode and Study Mode flag
+    let systemPrompt: string;
+    if (isStudyMode && mode === "doctor") {
+      systemPrompt = getStudyModePrompt();
+      span.setAttribute('chat.study_mode', true);
+    } else if (mode === "doctor") {
+      systemPrompt = getDoctorModePromptSimplified(hasFiles);
+    } else {
+      systemPrompt = getGeneralModePrompt();
+    }
 
     // 3. Prepare OpenAI Messages
     const openaiMessages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string; detail: string } }> }> = [
@@ -181,7 +192,7 @@ async function handleChatRequest(
       finalModel,
       message, // User's question for Input column display
       sessionId,
-      async (llmSpan, _captureLLMOutput) => {
+      async () => {
         return await openai.chat.completions.create({
           model: finalModel,
           // @ts-expect-error - OpenAI types are complex with mixed content
@@ -207,9 +218,9 @@ async function handleChatRequest(
         try {
           // Send Metadata Chunk first (Medical Images)
           if (medicalImages.length > 0) {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ medicalImages, sessionId })}\n\n`));
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ medicalImages, sessionId, model: finalModel })}\n\n`));
           } else {
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ sessionId })}\n\n`));
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ sessionId, model: finalModel })}\n\n`));
           }
 
           // Send content chunks and capture for tracing

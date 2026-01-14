@@ -5,15 +5,10 @@
  * Designed to showcase system capabilities and provide high-quality responses
  */
 
-export interface RadiologyQuestion {
-  text: string;
-  imageUrls?: string[]; // Optional image URLs for radiology cases
-}
-
 export interface CapabilityCategory {
   title: string;
   icon: React.ReactNode;
-  questions: (string | RadiologyQuestion)[];
+  questions: string[];
 }
 
 // ============================================================================
@@ -171,30 +166,7 @@ export const DOCTOR_MODE_CAPABILITIES = [
       "Compare the efficacy and safety of direct oral anticoagulants versus warfarin in atrial fibrillation patients with chronic kidney disease (eGFR 15-30 mL/min)."
     ]
   },
-  {
-    title: "Radiology Case Studies",
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-      </svg>
-    ),
-    questions: [
-      {
-        text: "A 78-year-old with a history of ischemic cardiomyopathy and hypertension presents with progressive dyspnea on exertion and orthopnea. This lateral chest X-ray was obtained along with a PA view. Interpret the radiographic findings, focusing on evidence of cardiomegaly or pulmonary congestion, and explain how they fit with possible heart failure vs alternative diagnoses.",
-        imageUrls: [
-          "/med-images/lateral chest X‑ray.jpg",
-          "/med-images/PA.jpg"
-        ]
-      },
-      {
-        text: "A 62-year-old woman with a history of headaches undergoes brain MRI showing a right frontal convexity extra-axial mass with dural tail sign. Serial MRI obtained 6 months later. Interpret the imaging findings, assess for interval growth, discuss the differential diagnosis (meningioma vs other extra-axial masses), and provide evidence-based recommendations for observation versus surgical intervention based on WHO grading and growth rate.",
-        imageUrls: [
-          "/med-images/brain MRI.png",
-          "/med-images/Brain-mri-2.png"
-        ]
-      }
-    ]
-  },
+
   {
     title: "Complex Clinical Cases & DDx",
     icon: (

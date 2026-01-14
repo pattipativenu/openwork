@@ -99,18 +99,26 @@ const OUTPUT_STRUCTURE_XML = `
   
   <section name="self_care_options" order="2">
     <description>3-4 short bullets MAXIMUM, 1-2 sentences each</description>
-    <citation_requirement>Include at least 1 citation [[N]](URL) in this section</citation_requirement>
+    <citation_requirement>Cite every claim using the provided evidence [[N]](URL)</citation_requirement>
     <rules>
       Each bullet = ONE simple option people commonly consider
       Start with the easiest, most immediate options first
       Use "Many people find..." or "Evidence suggests..." phrasing
       For medications: Include "Do not stop or change your medications without consulting your doctor"
     </rules>
+    <example_output>
+      ## Best Things You Can Do at Home
+      NOTE: Use REAL PMIDs from the evidence database, like:
+      - Many people find that applying a cold pack for 15-20 minutes helps reduce swelling[[1]](https://pubmed.ncbi.nlm.nih.gov/[PMID_FROM_EVIDENCE]).
+      - Gentle stretching may help improve flexibility[[2]](https://pmc.ncbi.nlm.nih.gov/articles/[PMCID_FROM_EVIDENCE]).
+
+      REMEMBER: Replace [PMID_FROM_EVIDENCE] with actual PMIDs from the Citation Whitelist!
+    </example_output>
   </section>
   
   <section name="foods_that_may_help" order="3">
     <description>4-6 bullets with everyday examples</description>
-    <citation_requirement>Include at least 1 citation [[N]](URL)</citation_requirement>
+    <citation_requirement>Cite every claim using the provided evidence [[N]](URL)</citation_requirement>
     <skip_condition>Skip for local pain questions (shoulder, back, knee, ankle, wrist)</skip_condition>
     <include_condition>Only for conditions with clear diet links: cholesterol, diabetes, blood pressure, weight, reflux, heart health</include_condition>
   </section>
@@ -161,6 +169,35 @@ const OUTPUT_STRUCTURE_XML = `
 
 
 // ============================================================================
+// CRITICAL CITATION RULE - TOP PRIORITY
+// ============================================================================
+
+const CRITICAL_CITATION_RULE_XML = `
+<critical_citation_rule severity="MANDATORY" priority="HIGHEST">
+  CITATION RULES - READ CAREFULLY:
+  
+  1. YOU MUST INCLUDE INLINE CITATIONS using [[N]](URL) format after health claims
+  2. YOU MUST USE ONLY THE EVIDENCE PROVIDED IN THE "EVIDENCE FROM MEDICAL DATABASES" SECTION
+  3. EACH REFERENCE MUST USE A REAL PMID/DOI FROM THE PROVIDED EVIDENCE
+  
+  🚨 FABRICATION IS FORBIDDEN:
+  - DO NOT invent PMIDs (like 12345678, 23456789 - these are FAKE)
+  - DO NOT create made-up article titles
+  - DO NOT guess at reference details
+  - If you cannot find a source in the evidence, DO NOT cite it
+  
+  ✅ CORRECT PROCESS:
+  1. Look at the "CITATION WHITELIST" section in the evidence
+  2. Find articles that support your claims
+  3. Use the EXACT PMIDs, titles, and URLs from those articles
+  4. Copy the metadata exactly as provided
+  
+  ❌ WRONG: "Walking helps[[1]](https://pubmed.ncbi.nlm.nih.gov/12345678)" (12345678 is a FAKE PMID)
+  ✅ RIGHT: Use actual PMIDs from the evidence like PMID:38457123, PMID:37654892, etc.
+</critical_citation_rule>
+`;
+
+// ============================================================================
 // CITATION FORMAT (XML) - CRITICAL FOR INLINE CITATIONS
 // ============================================================================
 
@@ -170,38 +207,42 @@ const CITATION_FORMAT_XML = `
   
   <critical_rules>
     <rule priority="1">You MUST use inline citations in your response</rule>
-    <rule priority="2">Format: [[N]](URL) where N is the reference number and URL is the full article link</rule>
-    <rule priority="3">Every major health claim needs a citation</rule>
+    <rule priority="2">Format: [[N]](URL) where N is the reference number and URL is from the evidence</rule>
+    <rule priority="3">Every major health claim needs a citation from the PROVIDED EVIDENCE</rule>
     <rule priority="4">Cite AS YOU WRITE, not just at the end</rule>
+    <rule priority="5">ANTI-FABRICATION: Only use PMIDs that appear in the "CITATION WHITELIST" section</rule>
+    <rule priority="6">If no evidence supports a claim, either find different evidence or do not make the claim</rule>
   </critical_rules>
   
-  <url_priority>
-    <best>PMC: https://pmc.ncbi.nlm.nih.gov/articles/PMC[ID]</best>
-    <good>Europe PMC: https://europepmc.org/article/MED/[PMID]</good>
-    <fallback>PubMed: https://pubmed.ncbi.nlm.nih.gov/[PMID]</fallback>
-  </url_priority>
+  <url_construction>
+    Build URLs from the evidence metadata:
+    - If PMID exists: https://pubmed.ncbi.nlm.nih.gov/[REAL_PMID_FROM_EVIDENCE]
+    - If PMCID exists: https://pmc.ncbi.nlm.nih.gov/articles/[REAL_PMCID_FROM_EVIDENCE]
+    - If DOI exists: https://doi.org/[REAL_DOI_FROM_EVIDENCE]
+  </url_construction>
   
   <reference_format>
-    1. [Full Article Title Here](URL)
-       Authors. Source/Journal. Year. PMID:12345678 doi:10.xxxx/yyyy
-       [Trusted Source] - [Open Access]
+    ## References
+    1. [Exact Article Title From Evidence](URL built from PMID)
+       Authors from evidence. Journal from evidence. Year from evidence. PMID:REAL_NUMBER
+       [Source Badge] - [Quality Badge]
   </reference_format>
   
+  <anti_fabrication_examples>
+    <fake_pmids_to_avoid>
+      12345678, 23456789, 34567890, 11111111, 99999999 (these are obviously fake!)
+    </fake_pmids_to_avoid>
+    <real_pmid_patterns>
+      Real PMIDs look like: 38457123, 37654892, 35123456 (8 digits, random-looking)
+    </real_pmid_patterns>
+  </anti_fabrication_examples>
+
   <badge_types>
     "Trusted Source" (for CDC, WHO, NIH)
     "Medical Guideline" (for official guidelines)
     "Research Study" (for PubMed articles)
     "Recent (≤3y)" (for publications within 3 years)
   </badge_types>
-  
-  <examples>
-    <correct>
-      "Eating fiber-rich foods can help lower your bad cholesterol[[1]](https://pmc.ncbi.nlm.nih.gov/articles/PMC12345)."
-    </correct>
-    <incorrect>
-      "Oatmeal is good for cholesterol." (NO CITATION - NEEDS SOURCE)
-    </incorrect>
-  </examples>
 </citation_format>
 `;
 
@@ -239,12 +280,23 @@ export function getGeneralModePrompt(): string {
   
   ${CITATION_FORMAT_XML}
   
+  ${CRITICAL_CITATION_RULE_XML}
+  
   <goal>
     Help everyday people understand their health in plain, reassuring language.
     Every point is backed by the same guidelines and trials a doctor would reference.
     Do NOT make up health information - if evidence is unclear, say so simply.
     Use phrases like "Many people find..." or "Evidence suggests..." rather than "You should..."
   </goal>
+  
+  <final_reminder priority="CRITICAL">
+    BEFORE YOU FINISH YOUR RESPONSE, VERIFY:
+    ✓ You have used [[N]](URL) inline citations after major health claims
+    ✓ Your ## References section lists ONLY sources you cited inline
+    ✓ Each reference has a real PMID or DOI from the evidence provided
+    
+    IF YOUR RESPONSE HAS NO [[N]](URL) CITATIONS, GO BACK AND ADD THEM NOW.
+  </final_reminder>
   
   <examples>
     <example type="good_explanation">

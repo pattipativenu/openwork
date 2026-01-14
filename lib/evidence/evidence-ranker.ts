@@ -183,6 +183,10 @@ export function rankAndFilterEvidence(
     // PubMed Articles
     addWithRelevance(evidence.pubmedArticles, 'article', 'pubmedArticles');
 
+    // FIXED: Add Tavily Citations to evidence processing
+    // Tavily citations are high-quality fallback sources from trusted medical domains
+    addWithRelevance(evidence.tavilyCitations, 'article', 'tavilyCitations');
+
     // 2. Filter out clearly off-topic items (relevance < 30)
     const MIN_RELEVANCE = 30;
     const relevantItems = allItems.filter(item => {
@@ -439,8 +443,8 @@ export function rankAndFilterEvidenceWithTags(
     config: TagBasedRankingConfig,
     maxItems?: number
 ): EvidencePackage {
-    const max = maxItems ?? config.max_references ?? 10;
-    const min = config.min_references ?? 5;
+    const max = 10; // CRITICAL: Strict cap for LLM prompt quality
+    const min = config.min_references ?? 3; // Reduced min to avoid filler evidence
     
     const allItems: ScoredEvidenceItem[] = [];
     
@@ -469,12 +473,36 @@ export function rankAndFilterEvidenceWithTags(
     // Add all evidence types
     addWithTagRelevance(evidence.guidelines || [], 'guideline', 'guidelines');
     addWithTagRelevance(evidence.pubmedGuidelines || [], 'guideline', 'pubmedGuidelines');
+    addWithTagRelevance(evidence.aapGuidelines || [], 'guideline', 'aapGuidelines');
+    addWithTagRelevance(evidence.whoGuidelines || [], 'guideline', 'whoGuidelines');
+    addWithTagRelevance(evidence.cdcGuidelines || [], 'guideline', 'cdcGuidelines');
+    addWithTagRelevance(evidence.niceGuidelines || [], 'guideline', 'niceGuidelines');
+
     addWithTagRelevance(evidence.cochraneRecent || [], 'review', 'cochraneRecent');
     addWithTagRelevance(evidence.cochraneReviews || [], 'review', 'cochraneReviews');
     addWithTagRelevance(evidence.pubmedReviews || [], 'review', 'pubmedReviews');
+    addWithTagRelevance(evidence.pmcReviews || [], 'review', 'pmcReviews');
+    addWithTagRelevance(evidence.literature || [], 'article', 'literature');
+
+    addWithTagRelevance(evidence.europePMCRecent || [], 'article', 'europePMCRecent');
+    addWithTagRelevance(evidence.europePMCCited || [], 'article', 'europePMCCited');
+    addWithTagRelevance(evidence.europePMCOpenAccess || [], 'article', 'europePMCOpenAccess');
+
+    addWithTagRelevance(evidence.pmcRecentArticles || [], 'article', 'pmcRecentArticles');
+    addWithTagRelevance(evidence.pmcArticles || [], 'article', 'pmcArticles');
+
+    addWithTagRelevance(evidence.semanticScholarPapers || [], 'article', 'semanticScholarPapers');
+    addWithTagRelevance(evidence.semanticScholarHighlyCited || [], 'article', 'semanticScholarHighlyCited');
+
     addWithTagRelevance(evidence.clinicalTrials || [], 'trial', 'clinicalTrials');
     addWithTagRelevance(evidence.pubmedArticles || [], 'article', 'pubmedArticles');
     
+    addWithTagRelevance(evidence.dailyMedDrugs || [], 'article', 'dailyMedDrugs');
+    addWithTagRelevance(evidence.rxnormDrugs || [], 'article', 'rxnormDrugs');
+
+    // FIXED: Add Tavily Citations to tag-based ranking
+    addWithTagRelevance(evidence.tavilyCitations || [], 'article', 'tavilyCitations');
+
     // Filter out off-topic items (relevance <5, lowered from 10)
     const MIN_RELEVANCE = 5;
     let relevantItems = allItems.filter(item => {

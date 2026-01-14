@@ -291,7 +291,7 @@ ${INLINE_CITATION_FORMAT}
 ${REFERENCE_FORMAT_STRUCTURED}
 
 **WORD LIMIT:**
-- Maximum 500 words for main answer (excluding references)
+- Target 400-500 words for the main answer (flexible), depending on complexity
 - Focus on ACTIONABLE guidance over volume
 - Every word must add clinical value
 

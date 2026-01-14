@@ -313,7 +313,7 @@ const WHO_GUIDELINES_DATABASE: WHOGuideline[] = [
     title: "WHO Guidelines on Diabetes Management",
     category: "Endocrinology",
     year: "2023",
-    url: "https://www.who.int/publications/i/item/9789240057511",
+    url: "https://www.who.int/publications/i/item/who-ucn-ncd-20.1",
     summary: "Guidelines for type 2 diabetes screening, diagnosis, and management.",
     recommendations: [
       "Metformin as first-line therapy for type 2 diabetes",

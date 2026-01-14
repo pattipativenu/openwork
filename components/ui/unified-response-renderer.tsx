@@ -18,6 +18,7 @@ interface UnifiedResponseRendererProps {
   onComplete?: () => void;
   showFollowUpQuestions?: boolean;
   conversationId?: string;
+  onQuestionSelect?: (question: string) => void;
 }
 
 export function UnifiedResponseRenderer({
@@ -25,7 +26,8 @@ export function UnifiedResponseRenderer({
   mode,
   onComplete,
   showFollowUpQuestions = true,
-  conversationId
+  conversationId,
+  onQuestionSelect
 }: UnifiedResponseRendererProps) {
   const [copied, setCopied] = useState(false);
   const [helpful, setHelpful] = useState<boolean | null>(null);
@@ -230,14 +232,20 @@ export function UnifiedResponseRenderer({
               <button
                 key={idx}
                 onClick={() => {
-                  // Get the input element and set the question
-                  const inputElement = document.querySelector('textarea[placeholder*="Ask"]') as HTMLTextAreaElement;
-                  if (inputElement) {
-                    inputElement.value = question;
-                    inputElement.focus();
-                    // Trigger input event to update React state
-                    const event = new Event('input', { bubbles: true });
-                    inputElement.dispatchEvent(event);
+                  if (onQuestionSelect) {
+                    onQuestionSelect(question);
+                    // Scroll to top of input or page if needed
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  } else {
+                    // Fallback for when callback is not provided
+                    const inputElement = document.querySelector('textarea[placeholder*="Ask"]') as HTMLTextAreaElement;
+                    if (inputElement) {
+                      inputElement.value = question;
+                      inputElement.focus();
+                      // Trigger input event to update React state
+                      const event = new Event('input', { bubbles: true });
+                      inputElement.dispatchEvent(event);
+                    }
                   }
                 }}
                 className="w-full text-left p-4 bg-white border border-gray-200 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-all duration-200 group cursor-pointer"

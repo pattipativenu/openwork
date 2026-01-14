@@ -3,7 +3,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { Upload, X, FileText, Image as ImageIcon, Send, Loader2 } from "lucide-react";
-import { useGemini } from "@/hooks/useGemini";
+import { useOpenAI } from "@/hooks/useOpenAI";
 import MarkdownTypewriter from "@/components/ui/markdown-typewriter";
 import { AnnotatedImage, VisualFinding } from "@/components/ui/annotated-image";
 import { parseVisualFindings, parseVisualFindingsFlexible, cleanVisualFindings } from "@/lib/parse-visual-findings";
@@ -1144,7 +1144,7 @@ export default function GeneralMode() {
   const [conversationId, setConversationId] = useState<string>(`conv_${Date.now()}`);
   const historyRef = useRef<HTMLDivElement>(null);
 
-  const { sendMessage, loading, error } = useGemini({ mode: "general" });
+  const { sendMessage, loading, error } = useOpenAI({ mode: "general" });
 
   // Save conversation to localStorage whenever chatHistory changes
   useEffect(() => {

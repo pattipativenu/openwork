@@ -254,6 +254,20 @@ export function scoreEvidenceSufficiency(
       console.error('❌ Error scoring recent articles:', error.message);
     }
 
+    // 5. Tavily/Web Evidence Bonus (Fallback)
+    // If we have very low score from primary sources but good web evidence, boost the score
+    try {
+      if (score < 40 && evidence.tavilyCitations && evidence.tavilyCitations.length > 0) {
+        const webCount = evidence.tavilyCitations.length;
+        // Cap bonus at 20 points (enough to push 20-30 score to ~50 passing)
+        const webBonus = Math.min(webCount * 2, 20);
+        score += webBonus;
+        reasoning.push(`${webCount} verified web citations (fallback evidence)`);
+      }
+    } catch (error: any) {
+      console.error('❌ Error scoring Tavily citations:', error.message);
+    }
+
     // 5. Systematic Reviews (non-Cochrane) - 10 points bonus
     try {
       const cochraneCount = (evidence.cochraneReviews?.length || 0) + (evidence.cochraneRecent?.length || 0);
@@ -275,14 +289,14 @@ export function scoreEvidenceSufficiency(
     // This prevents false "limited evidence" when we have a good mix
     try {
       let evidenceTypes = 0;
-      
+
       if (breakdown.cochraneReviews > 0) evidenceTypes++;
       if (breakdown.guidelines > 0) evidenceTypes++;
       if (breakdown.rcts > 0) evidenceTypes++;
       if (breakdown.recentArticles > 0) evidenceTypes++;
-      
+
       // Also count systematic reviews as a type
-      const hasSystematicReviews = 
+      const hasSystematicReviews =
         (evidence.pubmedReviews?.length || 0) > 0 ||
         (evidence.systematicReviews?.length || 0) > 0 ||
         (evidence.pmcReviews?.length || 0) > 0;
@@ -294,16 +308,16 @@ export function scoreEvidenceSufficiency(
         score += diversityBonus;
         reasoning.push(`Evidence diversity bonus: ${evidenceTypes} types of evidence (+${diversityBonus} points)`);
       }
-      
+
       // 7. Base Evidence Bonus - 10 points
       // ADDED: Give bonus just for having ANY evidence to prevent false "insufficient"
-      const totalSources = 
+      const totalSources =
         (evidence.pubmedArticles?.length || 0) +
         (evidence.pubmedReviews?.length || 0) +
         (evidence.guidelines?.length || 0) +
         (evidence.cochraneReviews?.length || 0) +
         (evidence.clinicalTrials?.length || 0);
-      
+
       if (totalSources >= 5) {
         score += 10;
         reasoning.push(`Base evidence bonus: ${totalSources} total sources (+10 points)`);
@@ -718,7 +732,7 @@ export function scoreEvidenceSufficiencyWithTags(
 
   // PHASE 3 ENHANCEMENT: Check if we meet min_evidence_threshold
   // Count total relevant articles across all sources
-  const totalArticles = 
+  const totalArticles =
     (evidence.pubmedArticles?.length || 0) +
     (evidence.pubmedReviews?.length || 0) +
     (evidence.cochraneReviews?.length || 0) +
@@ -730,14 +744,14 @@ export function scoreEvidenceSufficiencyWithTags(
     (evidence.pubmedGuidelines?.length || 0) +
     (evidence.semanticScholarPapers?.length || 0) +
     (evidence.semanticScholarHighlyCited?.length || 0);
-  
+
   // VOLUME-BASED BOOST: If we have substantial evidence volume, boost score significantly
   // This prevents false "insufficient" when we have 150+ evidence items like in user's example
   if (totalArticles >= 50) {  // Substantial evidence volume
     const volumeBonus = Math.min(40, Math.floor(totalArticles / 5)); // Up to 40 points bonus
     enhancedScore = Math.min(100, enhancedScore + volumeBonus);
     enhancedReasoning.push(`High evidence volume: ${totalArticles} articles (+${volumeBonus} points)`);
-    
+
     // Update level based on new score (using ultra-generous thresholds)
     if (enhancedScore >= 40) {
       enhancedLevel = 'excellent';
@@ -749,7 +763,7 @@ export function scoreEvidenceSufficiencyWithTags(
     const thresholdBonus = Math.min(25, totalArticles * 3); // Up to 25 points bonus (increased from 15)
     enhancedScore = Math.min(100, enhancedScore + thresholdBonus);
     enhancedReasoning.push(`Met evidence threshold: ${totalArticles} articles (min: ${min_evidence_threshold})`);
-    
+
     // Update level based on new score (using softened thresholds)
     if (enhancedScore >= 40) {  // Lowered from 60
       enhancedLevel = 'excellent';
@@ -791,24 +805,24 @@ export function scoreEvidenceSufficiencyWithTags(
   // ORTHOPEDIC/TRAUMA BOOST: Recognize orthopedic evidence quality
   // Orthopedic evidence often comes from radiology journals, case reports, and Open-i
   // These are high-quality for MSK queries even if not traditional RCTs
-  const isOrthopedicQuery = disease_tags.some(tag => 
+  const isOrthopedicQuery = disease_tags.some(tag =>
     ['FRACTURE', 'TIBIAL_PLATEAU_FX', 'TRAUMA', 'DISLOCATION', 'LIGAMENT_INJURY', 'MENISCAL_TEAR', 'SPRAIN', 'STRAIN', 'COMPARTMENT_SYNDROME', 'OSTEOMYELITIS'].includes(tag)
   );
-  
+
   if (isOrthopedicQuery) {
     // Count orthopedic-relevant evidence
-    const openIArticles = (evidence.openIResearchArticles?.length || 0) + 
-                          (evidence.openIReviewArticles?.length || 0) + 
-                          (evidence.openISystematicReviews?.length || 0) + 
-                          (evidence.openICaseReports?.length || 0);
+    const openIArticles = (evidence.openIResearchArticles?.length || 0) +
+      (evidence.openIReviewArticles?.length || 0) +
+      (evidence.openISystematicReviews?.length || 0) +
+      (evidence.openICaseReports?.length || 0);
     const pmcArticles = evidence.pmcArticles?.length || 0;
     const pubmedArticles = evidence.pubmedArticles?.length || 0;
-    
+
     if (openIArticles > 0 || pmcArticles > 3 || pubmedArticles > 5) {
       const orthoBonus = Math.min(15, openIArticles * 3 + Math.floor(pmcArticles / 2) + Math.floor(pubmedArticles / 3));
       enhancedScore = Math.min(100, enhancedScore + orthoBonus);
       enhancedReasoning.push(`Orthopedic evidence boost: +${orthoBonus} points (Open-i: ${openIArticles}, PMC: ${pmcArticles}, PubMed: ${pubmedArticles})`);
-      
+
       // Update level based on new score
       if (enhancedScore >= 70) {
         enhancedLevel = 'excellent';

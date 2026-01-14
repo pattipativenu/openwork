@@ -686,7 +686,7 @@ npx tsx scripts/verify-evidence-only.ts
 1. **Chat Route Configuration** - Verifies Google Search is disabled/commented out
 2. **Evidence Engine** - Confirms evidence databases (PubMed, Cochrane, etc.) are configured
 3. **System Prompts** - Validates evidence-only citation rules are enforced
-4. **Search Function Usage** - Ensures `getGeminiWithSearch()` is not called in active code
+4. **Search Function Usage** - Ensures `getSearchWithGrounding()` is not called in active code
 
 **Exit codes:**
 - `0` - All checks passed (evidence-only mode confirmed)

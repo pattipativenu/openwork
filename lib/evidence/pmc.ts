@@ -14,6 +14,30 @@
 const API_TOOL_NAME = "MedGuidance-AI";
 const API_CONTACT_EMAIL = "wenuupattipati@gmail.com";
 
+// NCBI API Key rotation for better rate limits
+function getNCBIApiKey(): string {
+  const keys = [
+    process.env.NCBI_API_KEY,
+    process.env.NCBI_API_KEY_DAILYMED
+  ].filter(Boolean);
+  
+  if (keys.length === 0) {
+    console.warn('⚠️  No NCBI API keys found - using default rate limits');
+    return '';
+  }
+  
+  // Rotate between available keys
+  const keyIndex = Math.floor(Math.random() * keys.length);
+  return keys[keyIndex] as string;
+}
+
+function buildApiUrl(baseUrl: string): string {
+  const apiKey = getNCBIApiKey();
+  const toolParam = `&tool=${API_TOOL_NAME}&email=${API_CONTACT_EMAIL}`;
+  const keyParam = apiKey ? `&api_key=${apiKey}` : '';
+  return `${baseUrl}${toolParam}${keyParam}`;
+}
+
 export interface PMCArticle {
   pmcId: string;
   title: string;
@@ -68,10 +92,9 @@ export async function searchPMC(
   maxResults: number = 5
 ): Promise<PMCArticle[]> {
   try {
-    const toolParam = `&tool=${API_TOOL_NAME}&email=${API_CONTACT_EMAIL}`;
-    
-    // Step 1: Search for PMC IDs
-    const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pmc&term=${encodeURIComponent(query)}&retmode=json&retmax=${maxResults}&sort=relevance${toolParam}`;
+    // Step 1: Search for PMC IDs with API key rotation
+    const searchBaseUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pmc&term=${encodeURIComponent(query)}&retmode=json&retmax=${maxResults}&sort=relevance`;
+    const searchUrl = buildApiUrl(searchBaseUrl);
     
     const searchRes = await fetchWithRetry(searchUrl);
     
@@ -87,8 +110,9 @@ export async function searchPMC(
       return [];
     }
     
-    // Step 2: Fetch article summaries
-    const summaryUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pmc&id=${ids.join(',')}&retmode=json${toolParam}`;
+    // Step 2: Fetch article summaries with API key rotation
+    const summaryBaseUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pmc&id=${ids.join(',')}&retmode=json`;
+    const summaryUrl = buildApiUrl(summaryBaseUrl);
     
     const summaryRes = await fetchWithRetry(summaryUrl);
     

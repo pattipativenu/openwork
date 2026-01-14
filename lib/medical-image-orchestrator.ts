@@ -23,7 +23,13 @@ export interface MedicalImage {
 }
 
 /**
- * Retrieve medical images with intelligent source routing
+ * Retrieve medical images with SMART GPT-powered query generation and validation
+ * 
+ * NEW APPROACH:
+ * 1. Use GPT to generate targeted Open-i search queries based on clinical context
+ * 2. Search Open-i with generated queries
+ * 3. STRICTLY validate each image for relevance before returning
+ * 4. Return empty array if no relevant images found (better than irrelevant images)
  */
 export async function retrieveMedicalImagesIntelligent(
   query: string,
@@ -31,159 +37,110 @@ export async function retrieveMedicalImagesIntelligent(
   _tags: { disease_tags: string[], decision_tags: string[] } // Unused but kept for API compatibility
 ): Promise<MedicalImage[]> {
   
-  console.log(`🎯 Intelligent image retrieval for: "${query}" (${mode} mode)`);
+  console.log(`🎯 SMART image retrieval for: "${query}" (${mode} mode)`);
   
-  // 1. Detect intent
+  try {
+    // Import smart gateway
+    const { getRelevantMedicalImages } = await import('./smart-image-gateway');
+
+    // Use the smart gateway which:
+    // 1. Generates GPT-powered search queries
+    // 2. Searches Open-i
+    // 3. Validates relevance strictly
+    // 4. Returns only relevant images (or empty array)
+    const validatedImages = await getRelevantMedicalImages(
+      query,
+      mode,
+      searchOpenI // Pass the searchOpenI function
+    );
+
+    // Convert to MedicalImage format
+    const results: MedicalImage[] = validatedImages.map((img: OpenIImage) => ({
+      id: img.id || `openi-${Date.now()}`,
+      url: img.imgLarge,
+      title: img.title,
+      description: img.abstract || '',
+      source: 'Open-i' as const,
+      attribution: img.attribution || 'Open-i / National Library of Medicine',
+      thumbnail: img.imgThumb,
+      score: 100
+    }));
+
+    console.log(`✅ Smart retrieval returned ${results.length} validated images`);
+
+    if (results.length === 0) {
+      console.log('⚠️ No relevant images found - this is intentional to avoid showing irrelevant content');
+    }
+
+    return results;
+
+  } catch (error) {
+    console.error('❌ Smart image retrieval failed:', error);
+
+    // FALLBACK: Use legacy approach but with strict filtering
+    console.log('🔄 Falling back to legacy approach with strict filtering...');
+
+    return legacyImageRetrieval(query, mode);
+  }
+}
+
+/**
+ * Legacy fallback with strict filtering
+ */
+async function legacyImageRetrieval(
+  query: string,
+  mode: 'doctor' | 'general'
+): Promise<MedicalImage[]> {
   const intent = detectImageIntent(query, mode);
-  console.log(`   Intent: ${intent.primary} (confidence: ${intent.confidence})`);
-  console.log(`   Sources: ${intent.sources.join(', ')}`);
-  console.log(`   Keywords:`, intent.keywords);
-  
-  // 2. Get optimized queries for each source
   const sourceQueries = getSourceQueries(query, intent);
-  
-  // 3. Parallel retrieval from selected sources with MULTIPLE QUERIES
-  const results: MedicalImage[] = [];
-  
-  // CRITICAL FIX: Filter out InjuryMap due to broken/placeholder URLs
-  const activeSources = intent.sources.filter(s => s !== 'injurymap');
-  
-  if (intent.sources.includes('injurymap')) {
-    console.log(`   ⚠️  InjuryMap disabled - broken URLs. Using Open-i for all medical images.`);
-  }
-  
-  // MAJOR FIX: Search Open-i with MULTIPLE query strategies for maximum coverage
-  if (activeSources.includes('openi')) {
-    try {
-      console.log(`   🔬 Searching Open-i with multiple strategies...`);
-      
-      // Strategy 1: Primary query (graphics/diagrams)
-      console.log(`   📊 Strategy 1 - Graphics: "${sourceQueries.openi}"`);
-      const graphicsImages = await searchOpenI({
-        query: sourceQueries.openi,
-        maxResults: 6,
-        imageType: 'xg', // Graphics/diagrams
-        collection: 'pmc'
-      });
-      
-      // Strategy 2: Anatomy query (if relevant)
-      let anatomyImages: OpenIImage[] = [];
-      if (intent.keywords.organs.length > 0 || intent.keywords.msk) {
-        const anatomyQuery = `${intent.keywords.organs.join(' ')} anatomy diagram`;
-        console.log(`   🫀 Strategy 2 - Anatomy: "${anatomyQuery}"`);
-        anatomyImages = await searchOpenI({
-          query: anatomyQuery,
-          maxResults: 4,
-          imageType: 'xg',
-          searchIn: 't', // Search in titles
-          collection: 'pmc'
-        });
+
+  try {
+    const images = await searchOpenI({
+      query: sourceQueries.openi,
+      maxResults: 8,
+      imageType: 'xg',
+      collection: 'pmc'
+    });
+
+    // STRICT FILTERING: Apply same exclusion logic as smart gateway
+    const strictExclusions = [
+      'pearl', 'embryo', 'zebrafish', 'drosophila', 'mouse model', 'rat model',
+      'xenopus', 'c. elegans', 'yeast', 'plant', 'bacteria culture', 'agar plate',
+      'gel electrophoresis', 'western blot', 'crystallography', 'spectroscopy',
+      'food', 'nutrition', 'recipe', 'cooking', 'agriculture',
+      'murine', 'bovine', 'porcine', 'equine', 'veterinary',
+      'art', 'sculpture', 'painting', 'photograph', 'portrait'
+    ];
+
+    const filteredImages = images.filter((img: OpenIImage) => {
+      const text = `${img.title} ${img.abstract || ''}`.toLowerCase();
+      for (const exclusion of strictExclusions) {
+        if (text.includes(exclusion)) {
+          console.log(`   ❌ Excluded: "${img.title.substring(0, 40)}..." - contains "${exclusion}"`);
+          return false;
+        }
       }
-      
-      // Strategy 3: Pathology/disease query (if relevant)
-      let pathologyImages: OpenIImage[] = [];
-      if (intent.keywords.diseases.length > 0) {
-        const pathologyQuery = `${intent.keywords.diseases.join(' ')} pathophysiology diagram`;
-        console.log(`   🔬 Strategy 3 - Pathology: "${pathologyQuery}"`);
-        pathologyImages = await searchOpenI({
-          query: pathologyQuery,
-          maxResults: 4,
-          imageType: 'xg',
-          articleType: 'rw', // Review articles
-          collection: 'pmc'
-        });
-      }
-      
-      // Strategy 4: Treatment/algorithm query (if relevant)
-      let treatmentImages: OpenIImage[] = [];
-      if (intent.keywords.diseases.length > 0 && mode === 'doctor') {
-        const treatmentQuery = `${intent.keywords.diseases.join(' ')} treatment algorithm`;
-        console.log(`   💊 Strategy 4 - Treatment: "${treatmentQuery}"`);
-        treatmentImages = await searchOpenI({
-          query: treatmentQuery,
-          maxResults: 3,
-          imageType: 'xg',
-          rankBy: 't', // Treatment-ranked
-          collection: 'pmc'
-        });
-      }
-      
-      // Combine all Open-i results
-      const allOpenIImages = [
-        ...graphicsImages,
-        ...anatomyImages,
-        ...pathologyImages,
-        ...treatmentImages
-      ];
-      
-      console.log(`   📊 Open-i total: ${allOpenIImages.length} images (${graphicsImages.length} graphics, ${anatomyImages.length} anatomy, ${pathologyImages.length} pathology, ${treatmentImages.length} treatment)`);
-      
-      // Convert to MedicalImage format
-      results.push(...allOpenIImages.map((img: OpenIImage) => ({
-        id: img.id,
-        url: img.imgLarge,
-        title: img.title,
-        description: img.abstract,
-        source: 'Open-i' as const,
-        attribution: img.attribution,
-        thumbnail: img.imgThumb,
-        score: 100 // Highest priority
-      })));
-      
-    } catch (error) {
-      console.error(`   ❌ Error searching Open-i:`, error);
-    }
-  }
-  
-  // 4. Deduplicate by URL
-  const seenUrls = new Set<string>();
-  const uniqueResults = results.filter(img => {
-    if (seenUrls.has(img.url)) {
-      console.log(`   🔄 Skipping duplicate image: ${img.title}`);
-      return false;
-    }
-    seenUrls.add(img.url);
-    return true;
-  });
-  
-  // 5. Return up to 8 Open-i images (increased from 4)
-  const topResults = uniqueResults.slice(0, 8);
-  
-  // CRITICAL FIX: Add fallback if no images found
-  if (topResults.length === 0) {
-    console.log(`⚠️  No images found from Open-i, trying fallback search...`);
+      return true;
+    });
     
-    // Fallback: Try a simpler, broader search
-    try {
-      const fallbackImages = await searchOpenI({
-        query: query.split(' ').slice(0, 2).join(' '), // Use first 2 words only
-        maxResults: 4,
-        collection: 'pmc' // Keep PMC for quality
-        // Remove imageType restriction for broader results
-      });
-      
-      const fallbackResults: MedicalImage[] = fallbackImages.map((img: OpenIImage) => ({
-        id: img.id,
-        url: img.imgLarge,
-        title: img.title,
-        description: img.abstract,
-        source: 'Open-i' as const,
-        attribution: img.attribution,
-        thumbnail: img.imgThumb,
-        score: 80 // Lower score for fallback
-      }));
-      
-      console.log(`🔄 Fallback search found ${fallbackResults.length} images`);
-      return fallbackResults;
-    } catch (fallbackError) {
-      console.error(`❌ Fallback search also failed:`, fallbackError);
-    }
+    console.log(`   ✅ After strict filtering: ${filteredImages.length}/${images.length} images`);
+
+    // Convert to MedicalImage format
+    return filteredImages.slice(0, 4).map((img: OpenIImage) => ({
+      id: img.id,
+      url: img.imgLarge,
+      title: img.title,
+      description: img.abstract || '',
+      source: 'Open-i' as const,
+      attribution: img.attribution || 'Open-i / National Library of Medicine',
+      thumbnail: img.imgThumb,
+      score: 80
+    }));
+
+  } catch (error) {
+    console.error('❌ Legacy retrieval also failed:', error);
+    return [];
   }
-  
-  console.log(`✅ Found ${topResults.length} unique images from Open-i`);
-  console.log(`📊 Final selection: ${topResults.map(img => `${img.title.slice(0, 50)}...`).join(' | ')}`);
-  
-  return topResults;
 }
 
 /**

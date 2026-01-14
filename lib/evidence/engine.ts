@@ -7,7 +7,16 @@
  */
 
 // Initialize evidence system and validate configuration
+// Initialize evidence system and validate configuration
 import './init';
+
+// Phoenix Observability Imports
+import {
+  withRetrieverSpan,
+  withRerankerSpan,
+  withToolSpan,
+  PhoenixDocument
+} from '../otel';
 
 // RAG SYSTEM IMPORTS
 import { rankRAGEvidence, type RAGRankingConfig } from './rag-evidence-ranker';
@@ -38,9 +47,19 @@ import { enhanceQueryWithMeSH, isLifestyleQuery, generateLifestyleSearchQueries 
 import { searchOMIM, isGeneticQuery, formatOMIMForPrompt, OMIMEntry } from "./omim";
 import { comprehensivePubChemSearch, formatPubChemForPrompt, shouldUsePubChemFallback, extractDrugTermsFromQuery, PubChemCompound, PubChemBioAssay } from "./pubchem";
 // Tavily AI fallback for when primary databases return insufficient results
-import { searchTavilyMedical, formatTavilyForPrompt, shouldTriggerTavilyFallback, TavilyCitation, TavilySearchResult } from "./tavily";
+import { searchTavilyMedical, formatTavilyForPrompt, shouldTriggerTavilyFallback, TavilyCitation, TavilySearchResult, extractSourceInfo } from "./tavily";
 // Phase 2: Semantic Enhancement → Now using BGE Cross-Encoder for better accuracy
-import { rerankPubMedWithBGE, rerankCochraneWithBGE } from "./bge-reranker";
+import {
+  rerankPubMedWithBGE,
+  rerankCochraneWithBGE,
+  rerankEuropePMCWithBGE,
+  rerankOpenAlexWithBGE,
+  rerankSemanticScholarWithBGE,
+  rerankPMCWithBGE,
+  rerankClinicalTrialsWithBGE,
+  rerankDailyMedWithBGE,
+  rerankAAPWithBGE
+} from "./bge-reranker";
 import { enrichEvidenceMetadata, formatBadges } from "./metadata-enricher";
 // Landmark Trials Database
 import { searchLandmarkTrials, formatLandmarkTrialsForPrompt, LandmarkTrial } from "./landmark-trials";
@@ -60,7 +79,26 @@ import { rankAndFilterEvidenceWithTags, type TagBasedRankingConfig } from "./evi
 // Evidence filtering by classification
 import { filterEvidenceByClassification } from "./evidence-filter";
 // Full-text fetching for top articles (DOI → PMC → Abstract fallback)
-import { fetchFullTextForTopArticles, formatFullTextForPrompt } from "./fulltext-fetcher";
+import {
+  fetchFullTextForTopArticles,
+  formatFullTextForPrompt,
+  // NEW: Chunk-based processing
+  fetchAndChunkFullTextForTopArticles,
+  formatChunksForPrompt,
+  type ArticleChunk
+} from "./fulltext-fetcher";
+// NEW: Chunk-level reranking
+import {
+  rerankChunksWithBGE,
+  articleChunksToRerankFormat,
+  type ChunkForRerank
+} from "./bge-reranker";
+// NEW: Abstract chunking for PubMed articles
+import {
+  createAbstractChunksFromArticles,
+  abstractChunksToRerankFormat,
+  type AbstractChunk
+} from "./sentence-splitter";
 
 export interface ClinicalGuideline {
   source: string;
@@ -239,6 +277,118 @@ function isDiabetesQuery(query: string): boolean {
 
   const lowerQuery = query.toLowerCase();
   return diabetesKeywords.some(keyword => lowerQuery.includes(keyword));
+}
+
+/**
+ * Enhanced query processing for drug comparison queries
+ * Implements 3-bucket requirement: Condition + Therapy + Renal (if applicable)
+ */
+function enhanceQueryForDrugComparison(query: string): string {
+  const lowerQuery = query.toLowerCase();
+
+  // Detect drug comparison queries
+  const isDrugComparison = /compare|versus|vs\.?|difference/i.test(query);
+  const hasApixaban = /apixaban/i.test(query);
+  const hasRivaroxaban = /rivaroxaban/i.test(query);
+  const hasAtrialFib = /atrial fibrillation|af\b|nvaf/i.test(query);
+  const hasCKD = /chronic kidney disease|ckd|renal|kidney|egfr/i.test(query);
+
+  // CRITICAL FIX: Detect pneumonia antibiotic queries
+  const isPneumoniaQuery = /pneumonia.*antibiotic|antibiotic.*pneumonia|hospital.*acquired.*pneumonia|HAP/i.test(query);
+  const hasMRSA = /mrsa/i.test(query);
+  const hasPseudomonas = /pseudomonas/i.test(query);
+  const hasVancomycin = /vancomycin/i.test(query);
+  const hasPiperacillin = /piperacillin.*tazobactam|pip.*tazo/i.test(query);
+  const hasCefepime = /cefepime/i.test(query);
+
+  if (isPneumoniaQuery && (hasMRSA || hasPseudomonas) && (hasVancomycin || hasPiperacillin || hasCefepime)) {
+    // CRITICAL: 3-bucket requirement for pneumonia antibiotic queries
+    // Bucket A (condition): hospital-acquired pneumonia
+    // Bucket B (pathogens): MRSA AND Pseudomonas
+    // Bucket C (antibiotics): vancomycin, piperacillin-tazobactam, cefepime
+
+    let focused = '(hospital-acquired pneumonia OR HAP OR nosocomial pneumonia) AND (MRSA OR "methicillin-resistant staphylococcus aureus") AND (Pseudomonas aeruginosa OR "P. aeruginosa")';
+
+    if (hasVancomycin && (hasPiperacillin || hasCefepime)) {
+      focused += ' AND (vancomycin AND (piperacillin-tazobactam OR cefepime))';
+    }
+
+    // Add outcome terms
+    focused += ' AND (empiric treatment OR antibiotic therapy OR antimicrobial therapy OR clinical outcomes OR nephrotoxicity OR efficacy)';
+
+    console.log(`🎯 Pneumonia antibiotic query detected: 3-bucket constraint applied`);
+    console.log(`   Query: "${focused}"`);
+    return focused;
+  }
+
+  if (isDrugComparison && hasApixaban && hasRivaroxaban && hasAtrialFib) {
+    // CRITICAL: 3-bucket requirement to prevent SGLT2 contamination
+    // Bucket A (condition): atrial fibrillation
+    // Bucket B (therapy): apixaban OR rivaroxaban  
+    // Bucket C (renal): CKD terms if applicable
+
+    let focused = '(atrial fibrillation OR AF) AND (apixaban OR rivaroxaban OR "factor Xa inhibitor" OR anticoagulant)';
+
+    if (hasCKD) {
+      focused += ' AND (chronic kidney disease OR CKD OR eGFR OR "creatinine clearance" OR "renal impairment")';
+    }
+
+    // Add outcome terms
+    focused += ' AND (stroke prevention OR bleeding risk OR efficacy OR safety)';
+
+    console.log(`🎯 Drug comparison query detected: 3-bucket constraint applied`);
+    console.log(`   Query: "${focused}"`);
+    return focused;
+  }
+
+  return query;
+}
+
+/**
+ * Post-retrieval filter to exclude SGLT2 studies unless explicitly requested
+ * Prevents DAPA-CKD/EMPA-KIDNEY contamination in AF anticoagulation queries
+ */
+function filterSGLT2Contamination<T extends { title: string; abstract?: string }>(
+  articles: T[],
+  query: string
+): { filtered: T[]; removed: number; reasons: string[] } {
+  const lowerQuery = query.toLowerCase();
+  const explicitSGLT2Request = /sglt2|empagliflozin|dapagliflozin|canagliflozin|sotagliflozin/i.test(query);
+
+  if (explicitSGLT2Request) {
+    // User explicitly asked about SGLT2 - don't filter
+    return { filtered: articles, removed: 0, reasons: [] };
+  }
+
+  const sglt2Keywords = [
+    'empagliflozin', 'dapagliflozin', 'canagliflozin', 'sotagliflozin',
+    'sglt2', 'sglt-2', 'sodium-glucose cotransporter',
+    'dapa-ckd', 'empa-kidney', 'emperor-reduced', 'emperor-preserved'
+  ];
+
+  const filtered: T[] = [];
+  const reasons: string[] = [];
+
+  for (const article of articles) {
+    const title = article.title.toLowerCase();
+    const abstract = (article.abstract || '').toLowerCase();
+    const text = `${title} ${abstract}`;
+
+    const hasSGLT2 = sglt2Keywords.some(keyword => text.includes(keyword));
+
+    if (hasSGLT2) {
+      reasons.push(`SGLT2 study filtered: "${article.title}"`);
+    } else {
+      filtered.push(article);
+    }
+  }
+
+  const removed = articles.length - filtered.length;
+  if (removed > 0) {
+    console.log(`🚫 SGLT2 contamination filter removed ${removed}/${articles.length} articles`);
+  }
+
+  return { filtered, removed, reasons };
 }
 
 /**
@@ -573,6 +723,9 @@ export async function gatherEvidence(
   let guidelineQuery = primarySearchQuery;
   let trialQuery = primarySearchQuery;
 
+  // CRITICAL FIX: Apply drug comparison enhancement first
+  enhancedQuery = enhanceQueryForDrugComparison(enhancedQuery);
+
   // Use primary query from guideline strategy if available
   if (guidelineSearchStrategy?.is_guideline_query) {
     enhancedQuery = guidelineSearchStrategy.primary_query;
@@ -678,58 +831,266 @@ export async function gatherEvidence(
     ...drugData
   ] = await Promise.all([
     // Clinical trials - INCREASED from 5 to 8
-    searchClinicalTrials(clinicalQuery, 8),
+    withRetrieverSpan('retrieve_clinical_trials', async (span) => {
+      const result = await searchClinicalTrials(clinicalQuery, 8);
+      // CRITICAL FIX: Null-safety for results
+      const trials = result || [];
+      return {
+        result,
+        documents: trials.map(t => ({
+          id: t.nctId || t.briefTitle,
+          content: `${t.briefTitle}\n${t.briefSummary || ''}`,
+          metadata: { url: t.nctId ? `https://clinicaltrials.gov/study/${t.nctId}` : undefined, source: 'ClinicalTrials.gov', ...t }
+        }))
+      };
+    }),
 
     // General literature (OpenAlex) - INCREASED from 5 to 8
-    searchLiterature(clinicalQuery, 8),
+    withRetrieverSpan('retrieve_openalex_literature', async (span) => {
+      const result = await searchLiterature(clinicalQuery, 8);
+      // CRITICAL FIX: Null-safety for results
+      const literature = result || [];
+      return {
+        result,
+        documents: literature.map(a => ({
+          id: a.doi || a.id || a.title,
+          content: `${a.title}\n${a.abstract || ''}`,
+          metadata: { url: a.doi, source: 'OpenAlex', year: a.publicationYear, ...a }
+        }))
+      };
+    }),
 
     // Systematic reviews (OpenAlex) - INCREASED from 2 to 5
-    searchSystematicReviews(clinicalQuery, 5),
+    withRetrieverSpan('retrieve_openalex_reviews', async (span) => {
+      const result = await searchSystematicReviews(clinicalQuery, 5);
+      // CRITICAL FIX: Null-safety for results
+      const reviews = result || [];
+      return {
+        result,
+        documents: reviews.map(a => ({
+          id: a.doi || a.id || a.title,
+          content: `${a.title}\n${a.abstract || ''}`,
+          metadata: { url: a.doi, source: 'OpenAlex (Reviews)', ...a }
+        }))
+      };
+    }),
 
     // PubMed comprehensive search (articles + reviews + guidelines) - with MeSH enhancement
-    // Pass isGuidelineQuery flag and guideline bodies to ensure we search for specific guidelines
-    comprehensivePubMedSearch(
-      enhancedQuery,
-      guidelineSearchStrategy?.is_guideline_query || false,
-      guidelineSearchStrategy?.guideline_bodies || clarifiedQuery?.guideline_bodies || []
-    ),
+    withRetrieverSpan('retrieve_pubmed', async (span) => {
+      const result = await comprehensivePubMedSearch(
+        enhancedQuery,
+        guidelineSearchStrategy?.is_guideline_query || false,
+        guidelineSearchStrategy?.guideline_bodies || clarifiedQuery?.guideline_bodies || []
+      );
+      // CRITICAL FIX: Null-safety for all sub-arrays
+      const articles = result?.articles || [];
+      const systematicReviews = result?.systematicReviews || [];
+      const guidelines = result?.guidelines || [];
 
-    // Europe PMC comprehensive search (recent, cited, preprints, open access)
-    // USE EXPANDED QUERY for better evidence retrieval
-    comprehensiveSearch(primarySearchQuery),
+      return {
+        result,
+        documents: [
+          ...articles.map(a => ({ id: a.pmid, content: `${a.title}\n${a.abstract || ''}`, metadata: { source: 'PubMed', ...a } })),
+          ...systematicReviews.map(a => ({ id: a.pmid, content: `${a.title}\n${a.abstract || ''}`, metadata: { source: 'PubMed (Review)', ...a } })),
+          ...guidelines.map(a => ({ id: a.pmid, content: `${a.title}\n${a.abstract || ''}`, metadata: { source: 'PubMed (Guideline)', ...a } })),
+        ]
+      };
+    }),
 
-    // PMC full-text search (articles, recent, reviews)
-    comprehensivePMCSearch(primarySearchQuery),
+    // Europe PMC comprehensive search
+    withRetrieverSpan('retrieve_europepmc', async (span) => {
+      span.setAttribute('search.query', primarySearchQuery);
+      const result = await comprehensiveSearch(primarySearchQuery);
+      // CRITICAL FIX: Null-safety for sub-arrays
+      const recent = result?.recent || [];
+      const cited = result?.cited || [];
+      const preprints = result?.preprints || [];
+      const openAccess = result?.openAccess || [];
 
-    // Cochrane Library systematic reviews (gold standard)
-    comprehensiveCochraneSearch(primarySearchQuery),
+      return {
+        result,
+        documents: [
+          ...recent.map(a => ({ id: a.id, content: `${a.title}\n${a.abstractText || ''}`, metadata: { ...a, tool_source: 'EuropePMC', type: 'recent' } })),
+          ...cited.map(a => ({ id: a.id, content: `${a.title}\n${a.abstractText || ''}`, metadata: { ...a, tool_source: 'EuropePMC', type: 'cited' } })),
+          ...preprints.map(a => ({ id: a.id, content: `${a.title}\n${a.abstractText || ''}`, metadata: { ...a, tool_source: 'EuropePMC', type: 'preprint' } })),
+          ...openAccess.map(a => ({ id: a.id, content: `${a.title}\n${a.abstractText || ''}`, metadata: { ...a, tool_source: 'EuropePMC', type: 'open_access' } })),
+        ]
+      };
+    }),
 
-    // Semantic Scholar search (general + highly cited) - INCREASED from 5 to 8
-    searchSemanticScholar(primarySearchQuery, 8),
-    searchHighlyCitedMedical(primarySearchQuery, 8),
+    // PMC full-text search
+    withRetrieverSpan('retrieve_pmc', async (span) => {
+      span.setAttribute('search.query', primarySearchQuery);
+      const result = await comprehensivePMCSearch(primarySearchQuery);
+      // CRITICAL FIX: Null-safety for sub-arrays
+      const articles = result?.articles || [];
+      const recentArticles = result?.recentArticles || [];
+      const reviews = result?.reviews || [];
 
-    // MedlinePlus consumer health information
-    comprehensiveMedlinePlusSearch(primarySearchQuery, drugNames),
+      return {
+        result,
+        documents: [
+          ...articles.map(a => ({ id: a.pmcId || a.title, content: a.title, metadata: { source: 'PMC', ...a } })),
+          ...recentArticles.map(a => ({ id: a.pmcId || a.title, content: a.title, metadata: { source: 'PMC (Recent)', ...a } })),
+          ...reviews.map(a => ({ id: a.pmcId || a.title, content: a.title, metadata: { source: 'PMC (Review)', ...a } })),
+        ]
+      };
+    }),
 
-    // DailyMed FDA drug labels
-    comprehensiveDailyMedSearch(primarySearchQuery),
+    // Cochrane Library systematic reviews
+    withRetrieverSpan('retrieve_cochrane', async (span) => {
+      span.setAttribute('search.query', primarySearchQuery);
+      const result = await comprehensiveCochraneSearch(primarySearchQuery);
+      // CRITICAL FIX: Null-safety for sub-arrays
+      const allReviews = result?.allReviews || [];
+      const recentReviews = result?.recentReviews || [];
 
-    // American Academy of Pediatrics (AAP) guidelines - for pediatric queries
-    comprehensiveAAPSearch(primarySearchQuery),
+      return {
+        result,
+        documents: [
+          ...allReviews.map(r => ({ id: r.doi || r.pmid, content: `${r.title}\n${r.abstract || ''}`, metadata: { source: 'Cochrane', ...r } })),
+          ...recentReviews.map(r => ({ id: r.doi || r.pmid, content: `${r.title}\n${r.abstract || ''}`, metadata: { source: 'Cochrane (Recent)', ...r } })),
+        ]
+      };
+    }),
 
-    // RxNorm drug information (NLM standardized drug nomenclature)
-    comprehensiveRxNormSearch(primarySearchQuery, drugNames),
+    // Semantic Scholar search
+    withRetrieverSpan('retrieve_semantic_scholar', async (span) => {
+      span.setAttribute('search.query', primarySearchQuery);
+      const result = await searchSemanticScholar(primarySearchQuery, 8);
+      // CRITICAL FIX: Null-safety for result
+      const articles = result || [];
+      return {
+        result,
+        documents: articles.map(a => ({
+          id: a.paperId,
+          content: `${a.title}\n${a.abstract || ''}`,
+          metadata: { ...a, source: 'Semantic Scholar' }
+        }))
+      };
+    }),
 
-    // NCBI Books (StatPearls and medical textbooks) - INCREASED from 3 to 5
-    searchStatPearls(primarySearchQuery, 5),
+    withRetrieverSpan('retrieve_semantic_scholar_highly_cited', async (span) => {
+      span.setAttribute('search.query', primarySearchQuery);
+      const result = await searchHighlyCitedMedical(primarySearchQuery, 8);
+      // CRITICAL FIX: Null-safety for result
+      const articles = result || [];
+      return {
+        result,
+        documents: articles.map(a => ({
+          id: a.paperId,
+          content: `${a.title}\n${a.abstract || ''}`,
+          metadata: { ...a, source: 'Semantic Scholar (Highly Cited)' }
+        }))
+      };
+    }),
 
-    // OMIM (genetic disorders - only if genetic query detected) - INCREASED from 3 to 5
-    isGeneticQuery(primarySearchQuery) ? searchOMIM(primarySearchQuery, 5) : Promise.resolve([]),
+    // MedlinePlus
+    withRetrieverSpan('retrieve_medlineplus', async (span) => {
+      const result = await comprehensiveMedlinePlusSearch(primarySearchQuery, drugNames);
+      // CRITICAL FIX: Null-safety for healthTopics
+      const healthTopics = result?.healthTopics || [];
+      return {
+        result,
+        documents: healthTopics.map(t => ({ id: t.url, content: `${t.title}\n${t.snippet}`, metadata: { source: 'MedlinePlus', ...t } }))
+      };
+    }),
+
+    // DailyMed
+    withRetrieverSpan('retrieve_dailymed', async (span) => {
+      const result = await comprehensiveDailyMedSearch(primarySearchQuery);
+      // CRITICAL FIX: Null-safety for drugs
+      const drugs = result?.drugs || [];
+      return {
+        result,
+        documents: drugs.map(d => ({
+          id: d.setId,
+          content: `${d.title}\n${d.activeIngredients?.join(', ') || ''}`,
+          metadata: { source: 'DailyMed', ...d }
+        }))
+      };
+    }),
+
+    // AAP guidelines
+    withRetrieverSpan('retrieve_aap', async (span) => {
+      const result = await comprehensiveAAPSearch(primarySearchQuery);
+      // CRITICAL FIX: Null-safety for AAP arrays
+      const guidelines = result?.guidelines || [];
+      const policyStatements = result?.policyStatements || [];
+      const keyResources = result?.keyResources || [];
+      return {
+        result,
+        documents: [
+          ...guidelines.map(g => ({ id: g.url, content: g.title, metadata: { source: 'AAP', ...g } })),
+          ...policyStatements.map(g => ({ id: g.url, content: g.title, metadata: { source: 'AAP (Policy)', ...g } })),
+          ...keyResources.map(g => ({ id: g.url, content: g.title, metadata: { source: 'AAP (Resource)', ...g } })),
+        ]
+      };
+    }),
+
+    // RxNorm
+    withRetrieverSpan('retrieve_rxnorm', async (span) => {
+      const result = await comprehensiveRxNormSearch(primarySearchQuery, drugNames);
+      // CRITICAL FIX: Null-safety for result.drugs to prevent "g.map is not a function" error
+      const drugs = result?.drugs || [];
+      return {
+        result,
+        documents: drugs.map(d => ({ id: d.rxcui, content: d.name, metadata: { source: 'RxNorm', ...d } }))
+      };
+    }),
+
+    // NCBI Books (StatPearls)
+    // NCBI Books (StatPearls)
+    withRetrieverSpan('retrieve_ncbi_books', async (span) => {
+      const result = await searchStatPearls(primarySearchQuery, 5);
+      return {
+        result,
+        documents: result.map(b => ({
+          id: b.bookId,
+          content: `${b.title}\n${b.abstract || ''}`,
+          metadata: { tool_source: 'NCBI Books', ...b }
+        }))
+      };
+    }),
+
+    // OMIM
+    // OMIM
+    withRetrieverSpan('retrieve_omim', async (span) => {
+      const result = await (isGeneticQuery(primarySearchQuery) ? searchOMIM(primarySearchQuery, 5) : Promise.resolve([]));
+      return {
+        result,
+        documents: result.map(o => ({
+          id: o.mimNumber,
+          content: `${o.title}\n${o.textSections?.find(s => s.textSectionName === 'description')?.textSectionContent || ''}`,
+          metadata: { tool_source: 'OMIM', ...o }
+        }))
+      };
+    }),
 
     // Drug-specific data (if drug names provided)
     ...drugNames.flatMap(drug => [
-      searchDrugLabels(drug, 2),
-      searchAdverseEvents(drug, 5),
+      withRetrieverSpan(`retrieve_drug_labels_${drug}`, async (span) => {
+        const result = await searchDrugLabels(drug, 2);
+        return {
+          result,
+          documents: result.map(d => ({
+            id: d.brandName,
+            content: `${d.brandName} (${d.genericName})\n${d.indications || ''}`,
+            metadata: { source: 'OpenFDA', drug }
+          }))
+        };
+      }),
+      withRetrieverSpan(`retrieve_adverse_events_${drug}`, async (span) => {
+        const result = await searchAdverseEvents(drug, 5);
+        return {
+          result,
+          documents: result.map((e, idx) => ({
+            id: `ae-${drug}-${idx}`,
+            content: `${e.reaction}: ${e.count} reports`,
+            metadata: { source: 'OpenFDA', drug }
+          }))
+        };
+      }),
     ]),
   ]);
 
@@ -824,50 +1185,330 @@ export async function gatherEvidence(
     pubmedGuidelinesAgeFiltered.reasons.slice(0, 3).forEach(r => console.log(`   ${r}`));
   }
 
+  // CRITICAL FIX: Apply SGLT2 contamination filter BEFORE reranking
+  console.log("🚫 Applying SGLT2 contamination filter...");
+  const pubmedArticlesSGLT2Filtered = filterSGLT2Contamination(pubmedArticlesAgeFiltered.filtered, clinicalQuery);
+  const pubmedReviewsSGLT2Filtered = filterSGLT2Contamination(pubmedReviewsAgeFiltered.filtered, clinicalQuery);
+  const europePMCRecentSGLT2Filtered = filterSGLT2Contamination(europePMCRecentFiltered.filtered, clinicalQuery);
+  const pmcArticlesSGLT2Filtered = filterSGLT2Contamination(pmcArticlesFiltered.filtered, clinicalQuery);
+
+  // Log SGLT2 filtering results
+  if (pubmedArticlesSGLT2Filtered.removed > 0) {
+    console.log(`🚫 SGLT2 filter removed ${pubmedArticlesSGLT2Filtered.removed} PubMed articles`);
+    pubmedArticlesSGLT2Filtered.reasons.slice(0, 3).forEach(r => console.log(`   ${r}`));
+  }
+
   // PHASE 2 ENHANCEMENT: Apply semantic reranking to improve relevance
-  console.log("🔄 Applying semantic reranking to improve relevance...");
-  let rerankedPubMedArticles = pubmedArticlesAgeFiltered.filtered;
-  let rerankedPubMedReviews = pubmedReviewsAgeFiltered.filtered;
+  console.log("🔄 Applying comprehensive semantic reranking to ALL evidence sources...");
+  let rerankedPubMedArticles = pubmedArticlesSGLT2Filtered.filtered;
+  let rerankedPubMedReviews = pubmedReviewsSGLT2Filtered.filtered;
   let rerankedCochraneReviews = cochraneReviewsAgeFiltered.filtered;
   let rerankedCochraneRecent = cochraneRecentAgeFiltered.filtered;
 
+  // Initialize reranked versions of ALL evidence sources (using SGLT2-filtered data)
+  let rerankedEuropePMCRecent = europePMCRecentSGLT2Filtered.filtered;
+  let rerankedEuropePMCCited = europePMCData.cited;
+  let rerankedEuropePMCOpenAccess = europePMCData.openAccess;
+  let rerankedLiterature = literature;
+  let rerankedSystematicReviews = systematicReviews;
+  let rerankedSemanticScholarPapers = semanticScholarPapers;
+  let rerankedSemanticScholarHighlyCited = semanticScholarHighlyCited;
+  let rerankedPMCArticles = pmcArticlesSGLT2Filtered.filtered;
+  let rerankedPMCReviews = pmcData.reviews;
+  let rerankedClinicalTrials = clinicalTrials;
+  let rerankedDailyMedDrugs = dailyMedData.drugs;
+  let rerankedAAPGuidelines = aapData.guidelines;
+
   try {
-    // Rerank PubMed articles if we have enough results (lowered threshold for better coverage)
+    // Environment-configurable minimum score (default 0.8 for high quality)
+    const minScore = parseFloat(process.env.BGE_RERANK_MIN_SCORE || '0.8');
+
+    // CRITICAL: Rerank ALL evidence sources, not just PubMed and Cochrane
+
+    // 1. PubMed Sources (existing)
     if (rerankedPubMedArticles.length >= 3) {
-      rerankedPubMedArticles = await rerankPubMedWithBGE(clinicalQuery, rerankedPubMedArticles, {
-        topK: 50,
-        minScore: 0.0,
-      });
-      console.log(`✅ Reranked ${rerankedPubMedArticles.length} PubMed articles (BGE Cross-Encoder)`);
+      rerankedPubMedArticles = await withRerankerSpan('rerank_pubmed_articles',
+        rerankedPubMedArticles.map(a => ({ id: a.pmid, content: `${a.title}\n${a.abstract || ''}`, metadata: { source: 'PubMed', ...a } })),
+        async (span) => {
+          const result = await rerankPubMedWithBGE(clinicalQuery, rerankedPubMedArticles, {
+            topK: 50,
+            minScore,
+            debugScores: true, // Enable debug logging
+          });
+          console.log(`✅ Reranked ${result.length} PubMed articles (BGE Cross-Encoder)`);
+          return {
+            result,
+            rerankedDocuments: result.map(a => ({ id: a.pmid, content: `${a.title}\n${a.abstract || ''}`, metadata: { source: 'PubMed', ...a } })),
+          };
+        }
+      );
     }
 
-    // Rerank PubMed reviews
     if (rerankedPubMedReviews.length >= 2) {
-      rerankedPubMedReviews = await rerankPubMedWithBGE(clinicalQuery, rerankedPubMedReviews, {
-        topK: 20,
-        minScore: 0.0,
-      });
-      console.log(`✅ Reranked ${rerankedPubMedReviews.length} PubMed reviews (BGE Cross-Encoder)`);
+      rerankedPubMedReviews = await withRerankerSpan('rerank_pubmed_reviews',
+        rerankedPubMedReviews.map(a => ({ id: a.pmid, content: `${a.title}\n${a.abstract || ''}`, metadata: { source: 'PubMed (Review)', ...a } })),
+        async (span) => {
+          const result = await rerankPubMedWithBGE(clinicalQuery, rerankedPubMedReviews, {
+            topK: 20,
+            minScore,
+          });
+          console.log(`✅ Reranked ${result.length} PubMed reviews (BGE Cross-Encoder)`);
+          return {
+            result,
+            rerankedDocuments: result.map(a => ({ id: a.pmid, content: `${a.title}\n${a.abstract || ''}`, metadata: { source: 'PubMed (Review)', ...a } })),
+          };
+        }
+      );
     }
 
-    // Rerank Cochrane reviews
+    // 2. Cochrane Sources (existing)
     if (rerankedCochraneReviews.length >= 2) {
-      rerankedCochraneReviews = await rerankCochraneWithBGE(clinicalQuery, rerankedCochraneReviews, {
-        topK: 10,
-        minScore: 0.0,
-      });
-      console.log(`✅ Reranked ${rerankedCochraneReviews.length} Cochrane reviews (BGE Cross-Encoder)`);
+      rerankedCochraneReviews = await withRerankerSpan('rerank_cochrane_reviews',
+        rerankedCochraneReviews.map(r => ({ id: r.doi || r.pmid, content: `${r.title}\n${r.abstract || ''}`, metadata: { source: 'Cochrane', ...r } })),
+        async (span) => {
+          const result = await rerankCochraneWithBGE(clinicalQuery, rerankedCochraneReviews, {
+            topK: 10,
+            minScore,
+          });
+          console.log(`✅ Reranked ${result.length} Cochrane reviews (BGE Cross-Encoder)`);
+          return {
+            result,
+            rerankedDocuments: result.map(r => ({ id: r.doi || r.pmid, content: `${r.title}\n${r.abstract || ''}`, metadata: { source: 'Cochrane', ...r } })),
+          };
+        }
+      );
     }
 
     if (rerankedCochraneRecent.length >= 2) {
-      rerankedCochraneRecent = await rerankCochraneWithBGE(clinicalQuery, rerankedCochraneRecent, {
-        topK: 5,
-        minScore: 0.0,
-      });
-      console.log(`✅ Reranked ${rerankedCochraneRecent.length} recent Cochrane reviews (BGE Cross-Encoder)`);
+      rerankedCochraneRecent = await withRerankerSpan('rerank_cochrane_recent',
+        rerankedCochraneRecent.map(r => ({ id: r.doi || r.pmid, content: `${r.title}\n${r.abstract || ''}`, metadata: { source: 'Cochrane (Recent)', ...r } })),
+        async (span) => {
+          const result = await rerankCochraneWithBGE(clinicalQuery, rerankedCochraneRecent, {
+            topK: 5,
+            minScore,
+          });
+          console.log(`✅ Reranked ${result.length} recent Cochrane reviews (BGE Cross-Encoder)`);
+          return {
+            result,
+            rerankedDocuments: result.map(r => ({ id: r.doi || r.pmid, content: `${r.title}\n${r.abstract || ''}`, metadata: { source: 'Cochrane (Recent)', ...r } })),
+          };
+        }
+      );
     }
+
+    // 3. Europe PMC Sources (NEW)
+    if (rerankedEuropePMCRecent.length >= 2) {
+      rerankedEuropePMCRecent = await withRerankerSpan('rerank_europepmc_recent',
+        rerankedEuropePMCRecent.map(a => ({ id: a.id, content: `${a.title}\n${a.abstractText || ''}`, metadata: { tool_source: 'EuropePMC', type: 'recent', ...a } })),
+        async (span) => {
+          const result = await rerankEuropePMCWithBGE(clinicalQuery, rerankedEuropePMCRecent, {
+            topK: 15,
+            minScore,
+          });
+          console.log(`✅ Reranked ${result.length} Europe PMC recent articles (BGE Cross-Encoder)`);
+          return {
+            result,
+            rerankedDocuments: result.map(a => ({ id: a.id, content: `${a.title}\n${a.abstractText || ''}`, metadata: { tool_source: 'EuropePMC', type: 'recent', ...a } })),
+          };
+        }
+      );
+    }
+
+    if (rerankedEuropePMCCited.length >= 2) {
+      rerankedEuropePMCCited = await withRerankerSpan('rerank_europepmc_cited',
+        rerankedEuropePMCCited.map(a => ({ id: a.id, content: `${a.title}\n${a.abstractText || ''}`, metadata: { tool_source: 'EuropePMC', type: 'cited', ...a } })),
+        async (span) => {
+          const result = await rerankEuropePMCWithBGE(clinicalQuery, rerankedEuropePMCCited, {
+            topK: 10,
+            minScore,
+          });
+          console.log(`✅ Reranked ${result.length} Europe PMC highly cited articles (BGE Cross-Encoder)`);
+          return {
+            result,
+            rerankedDocuments: result.map(a => ({ id: a.id, content: `${a.title}\n${a.abstractText || ''}`, metadata: { tool_source: 'EuropePMC', type: 'cited', ...a } })),
+          };
+        }
+      );
+    }
+
+    if (rerankedEuropePMCOpenAccess.length >= 2) {
+      rerankedEuropePMCOpenAccess = await withRerankerSpan('rerank_europepmc_open_access',
+        rerankedEuropePMCOpenAccess.map(a => ({ id: a.id, content: `${a.title}\n${a.abstractText || ''}`, metadata: { tool_source: 'EuropePMC', type: 'open_access', ...a } })),
+        async (span) => {
+          const result = await rerankEuropePMCWithBGE(clinicalQuery, rerankedEuropePMCOpenAccess, {
+            topK: 10,
+            minScore,
+          });
+          console.log(`✅ Reranked ${result.length} Europe PMC open access articles (BGE Cross-Encoder)`);
+          return {
+            result,
+            rerankedDocuments: result.map(a => ({ id: a.id, content: `${a.title}\n${a.abstractText || ''}`, metadata: { tool_source: 'EuropePMC', type: 'open_access', ...a } })),
+          };
+        }
+      );
+    }
+
+    // 4. OpenAlex Sources (NEW)
+    if (rerankedLiterature.length >= 2) {
+      rerankedLiterature = await withRerankerSpan('rerank_openalex_literature',
+        rerankedLiterature.map(a => ({ id: a.doi || a.id || a.title, content: `${a.title}\n${a.abstract || ''}`, metadata: { source: 'OpenAlex', ...a } })),
+        async (span) => {
+          const result = await rerankOpenAlexWithBGE(clinicalQuery, rerankedLiterature, {
+            topK: 15,
+            minScore,
+          });
+          console.log(`✅ Reranked ${result.length} OpenAlex literature (BGE Cross-Encoder)`);
+          return {
+            result,
+            rerankedDocuments: result.map(a => ({ id: a.doi || a.id || a.title, content: `${a.title}\n${a.abstract || ''}`, metadata: { source: 'OpenAlex', ...a } })),
+          };
+        }
+      );
+    }
+
+    if (rerankedSystematicReviews.length >= 2) {
+      rerankedSystematicReviews = await withRerankerSpan('rerank_openalex_reviews',
+        rerankedSystematicReviews.map(a => ({ id: a.doi || a.id || a.title, content: `${a.title}\n${a.abstract || ''}`, metadata: { source: 'OpenAlex (Reviews)', ...a } })),
+        async (span) => {
+          const result = await rerankOpenAlexWithBGE(clinicalQuery, rerankedSystematicReviews, {
+            topK: 10,
+            minScore,
+          });
+          console.log(`✅ Reranked ${result.length} OpenAlex systematic reviews (BGE Cross-Encoder)`);
+          return {
+            result,
+            rerankedDocuments: result.map(a => ({ id: a.doi || a.id || a.title, content: `${a.title}\n${a.abstract || ''}`, metadata: { source: 'OpenAlex (Reviews)', ...a } })),
+          };
+        }
+      );
+    }
+
+    // 5. Semantic Scholar Sources (NEW)
+    if (rerankedSemanticScholarPapers.length >= 2) {
+      rerankedSemanticScholarPapers = await withRerankerSpan('rerank_semantic_scholar',
+        rerankedSemanticScholarPapers.map(a => ({ id: a.paperId, content: `${a.title}\n${a.abstract || ''}`, metadata: { ...a, source: 'Semantic Scholar' } })),
+        async (span) => {
+          const result = await rerankSemanticScholarWithBGE(clinicalQuery, rerankedSemanticScholarPapers, {
+            topK: 15,
+            minScore,
+          });
+          console.log(`✅ Reranked ${result.length} Semantic Scholar papers (BGE Cross-Encoder)`);
+          return {
+            result,
+            rerankedDocuments: result.map(a => ({ id: a.paperId, content: `${a.title}\n${a.abstract || ''}`, metadata: { ...a, source: 'Semantic Scholar' } })),
+          };
+        }
+      );
+    }
+
+    if (rerankedSemanticScholarHighlyCited.length >= 2) {
+      rerankedSemanticScholarHighlyCited = await withRerankerSpan('rerank_semantic_scholar_highly_cited',
+        rerankedSemanticScholarHighlyCited.map(a => ({ id: a.paperId, content: `${a.title}\n${a.abstract || ''}`, metadata: { ...a, source: 'Semantic Scholar (Highly Cited)' } })),
+        async (span) => {
+          const result = await rerankSemanticScholarWithBGE(clinicalQuery, rerankedSemanticScholarHighlyCited, {
+            topK: 10,
+            minScore,
+          });
+          console.log(`✅ Reranked ${result.length} Semantic Scholar highly cited papers (BGE Cross-Encoder)`);
+          return {
+            result,
+            rerankedDocuments: result.map(a => ({ id: a.paperId, content: `${a.title}\n${a.abstract || ''}`, metadata: { ...a, source: 'Semantic Scholar (Highly Cited)' } })),
+          };
+        }
+      );
+    }
+
+    // 6. PMC Sources (NEW)
+    if (rerankedPMCArticles.length >= 2) {
+      rerankedPMCArticles = await withRerankerSpan('rerank_pmc',
+        rerankedPMCArticles.map(a => ({ id: a.pmcId || a.title, content: a.title, metadata: { source: 'PMC', ...a } })),
+        async (span) => {
+          const result = await rerankPMCWithBGE(clinicalQuery, rerankedPMCArticles, {
+            topK: 15,
+            minScore,
+          });
+          console.log(`✅ Reranked ${result.length} PMC articles (BGE Cross-Encoder)`);
+          return {
+            result,
+            rerankedDocuments: result.map(a => ({ id: a.pmcId || a.title, content: a.title, metadata: { source: 'PMC', ...a } })),
+          };
+        }
+      );
+    }
+
+    if (rerankedPMCReviews.length >= 2) {
+      rerankedPMCReviews = await withRerankerSpan('rerank_pmc_reviews',
+        rerankedPMCReviews.map(a => ({ id: a.pmcId || a.title, content: a.title, metadata: { source: 'PMC (Review)', ...a } })),
+        async (span) => {
+          const result = await rerankPMCWithBGE(clinicalQuery, rerankedPMCReviews, {
+            topK: 10,
+            minScore,
+          });
+          console.log(`✅ Reranked ${result.length} PMC reviews (BGE Cross-Encoder)`);
+          return {
+            result,
+            rerankedDocuments: result.map(a => ({ id: a.pmcId || a.title, content: a.title, metadata: { source: 'PMC (Review)', ...a } })),
+          };
+        }
+      );
+    }
+
+    // 7. Clinical Trials (NEW)
+    if (rerankedClinicalTrials.length >= 2) {
+      rerankedClinicalTrials = await withRerankerSpan('rerank_clinical_trials',
+        rerankedClinicalTrials.map(t => ({ id: t.nctId || t.briefTitle, content: `${t.briefTitle}\n${t.briefSummary || ''}`, metadata: { url: `https://clinicaltrials.gov/study/${t.nctId}`, source: 'ClinicalTrials.gov', ...t } })),
+        async (span) => {
+          const result = await rerankClinicalTrialsWithBGE(clinicalQuery, rerankedClinicalTrials, {
+            topK: 10,
+            minScore: minScore * 0.8, // Slightly lower threshold for trials
+          });
+          console.log(`✅ Reranked ${result.length} Clinical Trials (BGE Cross-Encoder)`);
+          return {
+            result,
+            rerankedDocuments: result.map(t => ({ id: t.nctId || t.briefTitle, content: `${t.briefTitle}\n${t.briefSummary || ''}`, metadata: { url: `https://clinicaltrials.gov/study/${t.nctId}`, source: 'ClinicalTrials.gov', ...t } })),
+          };
+        }
+      );
+    }
+
+    // 8. DailyMed Drug Information (NEW)
+    if (rerankedDailyMedDrugs.length >= 1) {
+      rerankedDailyMedDrugs = await withRerankerSpan('rerank_dailymed',
+        rerankedDailyMedDrugs.map(d => ({ id: d.setId, content: `${d.title}\n${d.activeIngredients.join(', ')}`, metadata: { source: 'DailyMed', ...d } })),
+        async (span) => {
+          const result = await rerankDailyMedWithBGE(clinicalQuery, rerankedDailyMedDrugs, {
+            topK: 5,
+            minScore: minScore * 0.7, // Lower threshold for drug info
+          });
+          console.log(`✅ Reranked ${result.length} DailyMed drugs (BGE Cross-Encoder)`);
+          return {
+            result,
+            rerankedDocuments: result.map(d => ({ id: d.setId, content: `${d.title}\n${d.activeIngredients.join(', ')}`, metadata: { source: 'DailyMed', ...d } })),
+          };
+        }
+      );
+    }
+
+    // 9. AAP Guidelines (NEW)
+    if (rerankedAAPGuidelines.length >= 1) {
+      rerankedAAPGuidelines = await withRerankerSpan('rerank_aap',
+        rerankedAAPGuidelines.map(g => ({ id: g.url, content: g.title, metadata: { source: 'AAP', ...g } })),
+        async (span) => {
+          const result = await rerankAAPWithBGE(clinicalQuery, rerankedAAPGuidelines, {
+            topK: 5,
+            minScore: minScore * 0.8, // Slightly lower threshold for guidelines
+          });
+          console.log(`✅ Reranked ${result.length} AAP guidelines (BGE Cross-Encoder)`);
+          return {
+            result,
+            rerankedDocuments: result.map(g => ({ id: g.url, content: g.title, metadata: { source: 'AAP', ...g } })),
+          };
+        }
+      );
+    }
+
   } catch (error: any) {
-    console.error("⚠️ Semantic reranking error, using filtered results:", error.message);
+    console.error("⚠️ Comprehensive semantic reranking error, using filtered results:", error.message);
     // Graceful degradation - use filtered results
   }
 
@@ -876,31 +1517,31 @@ export async function gatherEvidence(
   rerankedPubMedReviews = boostNeuroOncologyRelevance(rerankedPubMedReviews, clinicalQuery);
   rerankedCochraneReviews = boostNeuroOncologyRelevance(rerankedCochraneReviews, clinicalQuery);
 
-  // STEP 5: Build initial evidence package (with filtered and reranked results)
+  // STEP 5: Build initial evidence package (with ALL filtered and reranked results)
   // NOTE: Open-i is NOT included here - it's a fallback like Tavily
   const initialEvidence: EvidencePackage = {
-    clinicalTrials,
+    clinicalTrials: rerankedClinicalTrials, // UPDATED: Use reranked clinical trials
     drugLabels,
     adverseEvents,
-    literature,
-    systematicReviews,
+    literature: rerankedLiterature, // UPDATED: Use reranked OpenAlex literature
+    systematicReviews: rerankedSystematicReviews, // UPDATED: Use reranked OpenAlex systematic reviews
     pubmedArticles: rerankedPubMedArticles,
     pubmedReviews: rerankedPubMedReviews,
     pubmedGuidelines: pubmedGuidelinesAgeFiltered.filtered,
-    europePMCRecent: europePMCRecentFiltered.filtered,
-    europePMCCited: europePMCCitedFiltered.filtered,
+    europePMCRecent: rerankedEuropePMCRecent, // UPDATED: Use reranked Europe PMC recent
+    europePMCCited: rerankedEuropePMCCited, // UPDATED: Use reranked Europe PMC cited
     europePMCPreprints: europePMCData.preprints, // Keep preprints unfiltered (usually small)
-    europePMCOpenAccess: europePMCOpenAccessFiltered.filtered,
-    pmcArticles: pmcArticlesFiltered.filtered,
+    europePMCOpenAccess: rerankedEuropePMCOpenAccess, // UPDATED: Use reranked Europe PMC open access
+    pmcArticles: rerankedPMCArticles, // UPDATED: Use reranked PMC articles
     pmcRecentArticles: pmcRecentFiltered.filtered,
-    pmcReviews: pmcReviewsFiltered.filtered,
+    pmcReviews: rerankedPMCReviews, // UPDATED: Use reranked PMC reviews
     cochraneReviews: rerankedCochraneReviews,
     cochraneRecent: rerankedCochraneRecent,
-    semanticScholarPapers,
-    semanticScholarHighlyCited,
+    semanticScholarPapers: rerankedSemanticScholarPapers, // UPDATED: Use reranked Semantic Scholar papers
+    semanticScholarHighlyCited: rerankedSemanticScholarHighlyCited, // UPDATED: Use reranked Semantic Scholar highly cited
     medlinePlus: medlinePlusData,
-    dailyMedDrugs: dailyMedData.drugs,
-    aapGuidelines: aapData.guidelines,
+    dailyMedDrugs: rerankedDailyMedDrugs, // UPDATED: Use reranked DailyMed drugs
+    aapGuidelines: rerankedAAPGuidelines, // UPDATED: Use reranked AAP guidelines
     aapPolicyStatements: aapData.policyStatements,
     aapKeyResources: aapData.keyResources,
     rxnormDrugs: rxnormData.drugs,
@@ -975,17 +1616,78 @@ export async function gatherEvidence(
 
       // Call both fallbacks in parallel
       const [openIResult, tavilyRes] = await Promise.all([
-        comprehensiveOpenIArticleSearch(clinicalQuery),
-        searchTavilyMedical(clinicalQuery, {
-          maxResults: 10,
+        withRetrieverSpan('retrieve_openi', async (span) => {
+          span.setAttribute('search.query', clinicalQuery);
+          const result = await comprehensiveOpenIArticleSearch(clinicalQuery);
+          // CRITICAL FIX: Null-safety for researchArticles
+          const articles = result?.researchArticles || [];
+          return {
+            result,
+            documents: articles.map((a: any) => ({
+              id: a.id || a.title,
+              content: `${a.title}\n${a.abstract || ''}`,
+              metadata: { source: 'OpenI', ...a }
+            }))
+          };
+        }),
+        withRetrieverSpan('retrieve_tavily_fallback', async (span) => {
+          span.setAttribute('search.query', clinicalQuery);
+          const result = await searchTavilyMedical(clinicalQuery, {
+            maxResults: 10,
+          });
+          // CRITICAL FIX: Null-safety for citations
+          const citations = result?.citations || [];
+          return {
+            result,
+            documents: citations.map(c => ({
+              id: c.url,
+              content: `${c.title}\n${c.content}`,
+              metadata: { source: 'Tavily', ...c }
+            }))
+          };
         })
       ]);
 
       openIArticles = openIResult;
       tavilyResult = tavilyRes;
 
+      // STEP 6.5: Rerank Tavily citations for relevance (NEW)
+      if (tavilyResult && tavilyResult.citations.length >= 2) {
+        console.log(`🔄 Reranking ${tavilyResult.citations.length} Tavily citations...`);
+        try {
+          const { rerankTavilyWithBGE } = await import('./bge-reranker');
+          const minScore = parseFloat(process.env.BGE_RERANK_MIN_SCORE || '0.2');
+
+          const currentTavilyResult = tavilyResult;
+          const rerankedCitations = await withRerankerSpan('rerank_tavily',
+            currentTavilyResult.citations.map(c => ({ id: c.url, content: `${c.title}\n${c.content}`, metadata: { source: 'Tavily', ...c } })),
+            async (span) => {
+              const result = await rerankTavilyWithBGE(clinicalQuery, currentTavilyResult.citations, {
+                topK: 10,
+                minScore: minScore * 0.6, // Lower threshold for Tavily (60% of default)
+              });
+              return {
+                result,
+                rerankedDocuments: result.map(c => ({ id: c.url, content: `${c.title}\n${c.content}`, metadata: { source: 'Tavily', ...c } })),
+              };
+            }
+          );
+
+          // Update tavilyResult with reranked citations
+          tavilyResult = {
+            ...tavilyResult,
+            citations: rerankedCitations,
+          };
+
+          console.log(`✅ Reranked ${rerankedCitations.length} Tavily citations (BGE Cross-Encoder)`);
+        } catch (error: any) {
+          console.error('⚠️ Tavily reranking failed, using original order:', error.message);
+          // Continue with original citations
+        }
+      }
+
       console.log(`📚 Open-i fallback: ${openIResult.researchArticles.length + openIResult.reviewArticles.length} articles`);
-      console.log(`🌐 Tavily fallback: ${tavilyRes?.citations.length || 0} citations`);
+      console.log(`🌐 Tavily fallback: ${tavilyResult?.citations.length || 0} citations`);
     } else {
       console.log(`✅ Skipping fallbacks - internal evidence sufficient (score: ${sufficiencyScore.score}/100, filtered: ${filteredPrimaryCount})`);
       console.log(`📊 Primary sources used: PubMed (${rerankedPubMedArticles.length}), Europe PMC (${europePMCRecentFiltered.filtered.length}), Cochrane (${rerankedCochraneReviews.length}), PMC (${pmcArticlesFiltered.filtered.length})`);
@@ -1001,6 +1703,30 @@ export async function gatherEvidence(
     ]);
     openIArticles = openIResult;
     tavilyResult = tavilyRes;
+
+    // STEP 6.5: Rerank Tavily citations for relevance (NEW - fallback case)
+    if (tavilyResult && tavilyResult.citations.length >= 2) {
+      console.log(`🔄 Reranking ${tavilyResult.citations.length} Tavily citations (fallback)...`);
+      try {
+        const { rerankTavilyWithBGE } = await import('./bge-reranker');
+        const minScore = parseFloat(process.env.BGE_RERANK_MIN_SCORE || '0.2');
+        const rerankedCitations = await rerankTavilyWithBGE(clinicalQuery, tavilyResult.citations, {
+          topK: 10,
+          minScore: minScore * 0.6, // Lower threshold for Tavily (60% of default)
+        });
+
+        // Update tavilyResult with reranked citations
+        tavilyResult = {
+          ...tavilyResult,
+          citations: rerankedCitations,
+        };
+
+        console.log(`✅ Reranked ${rerankedCitations.length} Tavily citations (BGE Cross-Encoder)`);
+      } catch (error: any) {
+        console.error('⚠️ Tavily reranking failed, using original order:', error.message);
+        // Continue with original citations
+      }
+    }
   }
 
   // STEP 7: Update evidence package with fallback results (Open-i, Tavily) and PICO tags
@@ -1260,7 +1986,38 @@ export async function formatEvidenceForPrompt(
     }
   }
 
-  // STEP 0.6: Inject Anchor Guidelines Section (CRITICAL FIX)
+  // STEP 0.6: Build Citation Whitelist for LLM (CRITICAL for preventing hallucination)
+  const citationWhitelist: string[] = [];
+
+  // Add PMIDs from all evidence sources
+  evidence.pubmedArticles.forEach(article => {
+    if (article.pmid) citationWhitelist.push(article.pmid);
+  });
+  evidence.pubmedReviews.forEach(article => {
+    if (article.pmid) citationWhitelist.push(article.pmid);
+  });
+  evidence.pubmedGuidelines.forEach(article => {
+    if (article.pmid) citationWhitelist.push(article.pmid);
+  });
+  evidence.cochraneReviews.forEach(review => {
+    if (review.pmid) citationWhitelist.push(review.pmid);
+  });
+  evidence.europePMCRecent.forEach(article => {
+    if (article.pmid) citationWhitelist.push(article.pmid);
+  });
+  evidence.pmcArticles.forEach(article => {
+    if (article.articleIds?.pmid) citationWhitelist.push(article.articleIds.pmid);
+  });
+
+  console.log(`📋 Citation whitelist: ${citationWhitelist.length} valid PMIDs for LLM`);
+
+  formatted += "**🚨 CITATION WHITELIST (MANDATORY)**:\n";
+  formatted += "You may ONLY cite the following PMIDs that appear in the evidence:\n";
+  formatted += citationWhitelist.slice(0, 20).join(", ") + (citationWhitelist.length > 20 ? "..." : "") + "\n";
+  formatted += "**DO NOT cite any PMID not in this list. DO NOT invent PMIDs.**\n\n";
+  formatted += "---\n\n";
+
+  // STEP 0.7: Inject Anchor Guidelines Section (CRITICAL FIX)
   // This ensures anchor guidelines are prominently displayed and prioritized
   if (clinicalQuery) {
     try {
@@ -1282,27 +2039,123 @@ export async function formatEvidenceForPrompt(
     console.log(`🏆 Injected ${evidence.landmarkTrials.length} Landmark Trials into prompt`);
   }
 
-  // STEP 0.8: Fetch Full-Text for Top Articles (DOI → PMC → Abstract fallback)
-  // This provides 3-5x more context per article for better evidence synthesis
+  // STEP 0.8: CHUNK-BASED FULL-TEXT PROCESSING (Online Chunking System)
+  // Instead of big 3k-char blocks, we now:
+  // 1. Fetch full-text for top articles
+  // 2. Split into granular section-level chunks
+  // 3. Rerank chunks with BGE cross-encoder
+  // 4. Include only the highest-relevance chunks in the prompt
+
+  let rankedChunks: ArticleChunk[] = [];
+
   if (evidence.pubmedArticles && evidence.pubmedArticles.length > 0) {
     try {
-      console.log('📖 Fetching full-text for top articles...');
-      const articlesForFullText = evidence.pubmedArticles.slice(0, 5).map(article => ({
+      console.log('📖 PHASE: Chunk-based full-text processing...');
+
+      // Step 1: Select top articles for chunking
+      const articlesForChunking = evidence.pubmedArticles.slice(0, 8).map(article => ({
         pmid: article.pmid,
         doi: article.doi,
         title: article.title,
         abstract: article.abstract,
       }));
 
-      const fullTextResults = await fetchFullTextForTopArticles(articlesForFullText, 5);
-      const fullTextSection = formatFullTextForPrompt(fullTextResults, 3000);
+      // Step 2: Fetch full-text and create chunks
+      const chunkMap = await fetchAndChunkFullTextForTopArticles(articlesForChunking, 8);
 
-      if (fullTextSection && fullTextSection.length > 100) {
-        formatted += fullTextSection;
-        console.log(`📚 Injected full-text for ${fullTextResults.size} articles`);
+      // Step 3: Flatten all chunks into a single array for reranking
+      const allChunks: ArticleChunk[] = [];
+      for (const [, chunks] of chunkMap) {
+        allChunks.push(...chunks);
       }
+
+      console.log(`📦 Created ${allChunks.length} chunks from ${chunkMap.size} articles`);
+
+      // Step 4: Also create abstract chunks for articles without full-text
+      const abstractChunks = createAbstractChunksFromArticles(
+        evidence.pubmedArticles.slice(0, 10),
+        2 // 2 sentences per chunk
+      );
+
+      // Convert abstract chunks to ArticleChunk format
+      const abstractAsArticleChunks: ArticleChunk[] = abstractChunks.map(ac => ({
+        id: ac.id,
+        pmid: ac.pmid,
+        title: ac.title,
+        journal: ac.journal,
+        year: ac.year ? parseInt(ac.year) : undefined,
+        sectionType: 'abstract' as const,
+        sectionHeading: 'Abstract',
+        chunkIndex: ac.sentenceIndices[0] || 0,
+        text: ac.text,
+        source: 'abstract' as const,
+      }));
+
+      // Combine full-text chunks with abstract chunks (full-text takes priority)
+      const fullTextPmids = new Set(Array.from(chunkMap.keys()));
+      const filteredAbstractChunks = abstractAsArticleChunks.filter(
+        c => !fullTextPmids.has(c.pmid)
+      );
+
+      const combinedChunks = [...allChunks, ...filteredAbstractChunks];
+      console.log(`📦 Total chunks for reranking: ${combinedChunks.length} (${allChunks.length} full-text + ${filteredAbstractChunks.length} abstract)`);
+
+      // Step 5: Rerank all chunks using BGE cross-encoder
+      if (combinedChunks.length > 0 && clinicalQuery) {
+        const chunksForRerank = articleChunksToRerankFormat(combinedChunks);
+
+        const rerankedChunkResults = await rerankChunksWithBGE(
+          clinicalQuery,
+          chunksForRerank,
+          {
+            topK: 40,      // Consider up to 40 chunks
+            minScore: 0.5, // Require decent relevance
+            maxLength: 384 // Smaller token limit for chunks
+          }
+        );
+
+        // Map back reranked scores to ArticleChunks
+        const chunkIdToScore = new Map(
+          rerankedChunkResults.map(c => [c.id, c.score || 0])
+        );
+
+        rankedChunks = combinedChunks
+          .map(c => ({
+            ...c,
+            score: chunkIdToScore.get(c.id) || 0,
+          }))
+          .filter(c => c.score && c.score >= 0.5)
+          .sort((a, b) => (b.score || 0) - (a.score || 0))
+          .slice(0, 15); // Keep top 15 chunks
+
+        console.log(`🎯 Selected ${rankedChunks.length} high-relevance chunks after reranking`);
+
+        // Add PMIDs from chunks to citation whitelist
+        rankedChunks.forEach(chunk => {
+          if (chunk.pmid && !citationWhitelist.includes(chunk.pmid)) {
+            citationWhitelist.push(chunk.pmid);
+          }
+        });
+      }
+
+      // Step 6: Format ranked chunks for the prompt
+      if (rankedChunks.length > 0) {
+        const chunksSection = formatChunksForPrompt(rankedChunks, 12, 800);
+        formatted += chunksSection;
+        console.log(`📚 Injected ${Math.min(rankedChunks.length, 12)} granular chunks into prompt`);
+      } else {
+        // Fallback to old full-text approach if chunking fails
+        console.log('⚠️ No chunks passed reranking threshold, falling back to full-text...');
+        const fullTextResults = await fetchFullTextForTopArticles(articlesForChunking, 5);
+        const fullTextSection = formatFullTextForPrompt(fullTextResults, 3000);
+        if (fullTextSection && fullTextSection.length > 100) {
+          formatted += fullTextSection;
+          console.log(`📚 Fallback: Injected full-text for ${fullTextResults.size} articles`);
+        }
+      }
+
     } catch (error) {
-      console.warn('⚠️ Full-text fetch failed, continuing with abstracts:', error);
+      console.warn('⚠️ Chunk-based processing failed, continuing with abstracts:', error);
     }
   }
 
@@ -1613,6 +2466,38 @@ export async function formatEvidenceForPrompt(
   // Additional Medical Sources (from real-time search - sources like Mayo Clinic, CDC, WHO, etc.)
   if (evidence.tavilyResult && evidence.tavilyResult.answer) {
     formatted += formatTavilyForPrompt(evidence.tavilyResult);
+  }
+
+  // FIXED: Tavily Citations with Full Content (High-Quality Fallback Sources)
+  if (evidence.tavilyCitations && evidence.tavilyCitations.length > 0) {
+    formatted += "## ZONE 0B: TAVILY MEDICAL CITATIONS (Trusted Sources)\n";
+    formatted += "**High-quality medical sources from trusted domains (Mayo Clinic, CDC, WHO, etc.)**\n\n";
+
+    evidence.tavilyCitations.forEach((citation, i) => {
+      const metadata = enrichEvidenceMetadata(citation, 'article');
+
+      // Extract source information from URL
+      const sourceInfo = extractSourceInfo(citation.url);
+
+      formatted += `${i + 1}. ${citation.title || sourceInfo.title}\n`;
+      formatted += `   SOURCE: ${sourceInfo.sourceName}\n`;
+      formatted += `   URL: ${citation.url}\n`;
+
+      // CRITICAL FIX: Use full content instead of truncated snippets
+      if (citation.content) {
+        // Use full content - this is the key fix for better evidence quality
+        const fullContent = citation.content.length > 2000
+          ? citation.content.substring(0, 2000) + '...'
+          : citation.content;
+        formatted += `   FULL CONTENT: ${fullContent}\n`;
+      }
+
+      if (citation.published_date) formatted += `   Published: ${citation.published_date}\n`;
+      if (citation.score) formatted += `   Relevance Score: ${citation.score}\n`;
+      formatted += `   Badges: ${formatBadges(metadata)}\n`;
+      formatted += `   ⭐ PRIORITY: Trusted medical source - cite with proper attribution to ${sourceInfo.sourceName}\n`;
+      formatted += `\n`;
+    });
   }
 
   // Clinical Guidelines (highest priority - authoritative recommendations)

@@ -11,5 +11,5 @@ uvicorn
 # Data handling for evaluations
 pandas
 
-# Google GenAI for evaluation (uses existing GEMINI_API_KEY)
-google-genai
+# OpenAI for evaluation (uses OPENAI_API_KEY)
+openai

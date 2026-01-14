@@ -27,6 +27,7 @@ export interface ClinicalTrial {
 /**
  * Search ClinicalTrials.gov for relevant trials using API v2
  * NOW WITH CACHING: Checks Redis cache before hitting ClinicalTrials.gov API
+ * FIXED: Corrected API v2 parameter format based on official documentation
  * @param query - Search query (can use condition, intervention, or general terms)
  * @param maxResults - Maximum number of results to return (default: 10)
  * @returns Array of clinical trials
@@ -52,26 +53,38 @@ export async function searchClinicalTrials(
 
   // Cache miss - fetch from API
   try {
-    // ClinicalTrials.gov API v2 - Updated endpoint structure
-    // Using query.cond and query.term for comprehensive search
-    // API v2 uses different parameter format than v1
-    const url = `https://clinicaltrials.gov/api/v2/studies?query.cond=${encodeURIComponent(query)}&query.term=${encodeURIComponent(query)}&pageSize=${maxResults}&format=json`;
+    // FIXED: ClinicalTrials.gov API v2 - Use correct parameter format
+    // Simplify complex queries to avoid "Too complicated query" error
+    const simplifiedQuery = query.length > 100 ? 
+      query.split(' ').slice(0, 10).join(' ') : // Take first 10 words for complex queries
+      query;
+    
+    const url = `https://clinicaltrials.gov/api/v2/studies?query.term=${encodeURIComponent(simplifiedQuery)}&pageSize=${maxResults}&format=json`;
     
     console.log("🔬 Fetching clinical trials from ClinicalTrials.gov API v2...");
+    console.log(`🔗 Simplified query: "${simplifiedQuery}"`);
     
     const response = await fetch(url, {
-      signal: AbortSignal.timeout(10000), // 10 second timeout
+      signal: AbortSignal.timeout(15000), // Increased timeout to 15 seconds
+      headers: {
+        'User-Agent': 'MedGuidance-AI/1.0 (Medical Research Application)',
+        'Accept': 'application/json'
+      }
     });
     
     if (!response.ok) {
       console.error(`❌ ClinicalTrials.gov API error: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      console.error(`❌ Error details: ${errorText}`);
       return [];
     }
     
     const data = await response.json();
     
-    if (!data.studies || data.studies.length === 0) {
+    // API v2 returns different structure - check for studies array
+    if (!data.studies || !Array.isArray(data.studies) || data.studies.length === 0) {
       console.log("⚠️  No clinical trials found for query:", query);
+      console.log("📊 API Response structure:", Object.keys(data));
       return [];
     }
     
@@ -128,6 +141,9 @@ export async function searchClinicalTrials(
     return trials;
   } catch (error: any) {
     console.error("❌ Error fetching clinical trials:", error.message);
+    if (error.name === 'AbortError') {
+      console.error("❌ ClinicalTrials.gov API request timed out");
+    }
     return [];
   }
 }
@@ -140,10 +156,15 @@ export async function searchTrialsByCondition(
   maxResults: number = 10
 ): Promise<ClinicalTrial[]> {
   try {
+    // Use the corrected API v2 format with query.cond parameter
     const url = `https://clinicaltrials.gov/api/v2/studies?query.cond=${encodeURIComponent(condition)}&pageSize=${maxResults}&format=json`;
     
     const response = await fetch(url, {
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(15000),
+      headers: {
+        'User-Agent': 'MedGuidance-AI/1.0 (Medical Research Application)',
+        'Accept': 'application/json'
+      }
     });
     
     if (!response.ok) {
@@ -152,7 +173,7 @@ export async function searchTrialsByCondition(
     }
     
     const data = await response.json();
-    return parseTrials(data);
+    return parseTrialsV2(data);
   } catch (error: any) {
     console.error("Error fetching trials by condition:", error.message);
     return [];
@@ -167,10 +188,15 @@ export async function searchTrialsByIntervention(
   maxResults: number = 10
 ): Promise<ClinicalTrial[]> {
   try {
+    // Use the corrected API v2 format with query.intr parameter
     const url = `https://clinicaltrials.gov/api/v2/studies?query.intr=${encodeURIComponent(intervention)}&pageSize=${maxResults}&format=json`;
     
     const response = await fetch(url, {
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(15000),
+      headers: {
+        'User-Agent': 'MedGuidance-AI/1.0 (Medical Research Application)',
+        'Accept': 'application/json'
+      }
     });
     
     if (!response.ok) {
@@ -179,7 +205,7 @@ export async function searchTrialsByIntervention(
     }
     
     const data = await response.json();
-    return parseTrials(data);
+    return parseTrialsV2(data);
   } catch (error: any) {
     console.error("Error fetching trials by intervention:", error.message);
     return [];
@@ -188,9 +214,11 @@ export async function searchTrialsByIntervention(
 
 /**
  * Helper function to parse trial data from API v2 response
+ * Updated for the correct API v2 response structure
  */
-function parseTrials(data: any): ClinicalTrial[] {
+function parseTrialsV2(data: any): ClinicalTrial[] {
   if (!data.studies || !Array.isArray(data.studies)) {
+    console.warn("Invalid API v2 response structure:", Object.keys(data));
     return [];
   }
   
@@ -204,6 +232,7 @@ function parseTrials(data: any): ClinicalTrial[] {
     const sponsorCollab = protocol.sponsorCollaboratorsModule || {};
     const description = protocol.descriptionModule || {};
     const eligibility = protocol.eligibilityModule || {};
+    const contactsLocations = protocol.contactsLocationsModule || {};
     
     return {
       nctId: identification.nctId || "",
@@ -212,9 +241,7 @@ function parseTrials(data: any): ClinicalTrial[] {
       overallStatus: status.overallStatus || "UNKNOWN",
       phases: design.phases || [],
       conditions: conditions.conditions || [],
-      interventions: (armsInterventions.interventions || [])
-        .map((i: any) => i.name || "")
-        .filter(Boolean),
+      interventions: (armsInterventions.interventions || []).map((i: any) => i.name || "").filter(Boolean),
       leadSponsor: sponsorCollab.leadSponsor?.name || "",
       startDate: status.startDateStruct?.date,
       completionDate: status.completionDateStruct?.date,
@@ -223,6 +250,13 @@ function parseTrials(data: any): ClinicalTrial[] {
       hasResults: study.hasResults || false,
       briefSummary: description.briefSummary,
       eligibilityCriteria: eligibility.eligibilityCriteria,
+      locations: (contactsLocations.locations || [])
+        .map((loc: any) => {
+          const city = loc.city || "";
+          const country = loc.country || "";
+          return city && country ? `${city}, ${country}` : city || country;
+        })
+        .filter(Boolean),
     };
   });
 }

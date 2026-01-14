@@ -62,7 +62,7 @@ export function detectImageIntent(
   });
   
   // Detect imaging modalities
-  const modalities = ['ct', 'mri', 'x-ray', 'xray', 'ultrasound', 'echo', 'pet', 'scan'];
+  const modalities = ['ultrasound', 'echo', 'scan'];
   modalities.forEach(mod => {
     if (lowerQuery.includes(mod)) {
       keywords.imaging = true;
@@ -157,11 +157,43 @@ export function getSourceQueries(
 ): Record<'openi' | 'injurymap', string> {
   const { keywords } = intent;
   
+  // CRITICAL FIX: Build more specific queries based on detected diseases/organs
+  let openiQuery = '';
+
+  if (keywords.diseases.length > 0) {
+    // Use specific diseases for more targeted image search
+    const diseaseTerms = keywords.diseases.slice(0, 2).join(' ');
+    openiQuery = keywords.imaging
+      ? `${diseaseTerms} imaging diagnosis`
+      : `${diseaseTerms} pathophysiology diagram algorithm`;
+  } else if (keywords.organs.length > 0) {
+    // Use organ-specific queries
+    const organTerms = keywords.organs.slice(0, 2).join(' ');
+    openiQuery = `${organTerms} anatomy diagram`;
+  } else if (keywords.bodyParts.length > 0) {
+    // Use MSK body parts
+    const bodyTerms = keywords.bodyParts.slice(0, 2).join(' ');
+    openiQuery = `${bodyTerms} anatomy musculoskeletal diagram`;
+  } else {
+    // Fallback: Extract key medical terms from query for more specific search
+    // Avoid generic "What is X" phrasing
+    const cleanQuery = query
+      .replace(/^what is\b/i, '')
+      .replace(/^how to\b/i, '')
+      .replace(/^tell me about\b/i, '')
+      .replace(/\?/g, '')
+      .trim();
+
+    openiQuery = keywords.imaging
+      ? `${cleanQuery} medical imaging`
+      : `${cleanQuery} diagram pathophysiology`;
+  }
+
+  console.log(`   🎯 Open-i query built: "${openiQuery}"`);
+
   return {
-    // Open-i: Add "diagram" or "pathophysiology" for better results
-    openi: keywords.imaging 
-      ? `${query} medical imaging`
-      : `${query} diagram pathophysiology`,
+    // Open-i: Use disease/organ-specific query
+    openi: openiQuery,
     
     // InjuryMap: Pass full query to search multiple body parts
     // The searchInjuryMap function will extract all mentioned body parts

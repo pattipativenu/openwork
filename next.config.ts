@@ -5,9 +5,10 @@ const nextConfig: NextConfig = {
   /* config options here */
   reactCompiler: true,
   output: 'standalone', // Required for Docker deployment
-  turbopack: {
-    root: path.resolve(__dirname),
-  },
+  // turbopack: {
+  //   root: path.resolve(__dirname),
+  // },
+
   images: {
     remotePatterns: [
       {

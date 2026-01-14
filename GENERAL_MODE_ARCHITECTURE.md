@@ -2,7 +2,7 @@
 
 ## Overview
 
-General Mode is a **consumer-friendly health information assistant** designed to provide accessible, evidence-based health guidance to the general public. It uses the same powerful evidence engine as Doctor Mode but presents information in simple, actionable language with built-in safety mechanisms.
+General Mode is a **consumer-friendly health information assistant** designed to provide accessible, evidence-based health guidance to the general public. It uses the same powerful evidence engine as Doctor Mode, including **comprehensive BGE Cross-Encoder reranking of all 57+ evidence sources**, but presents information in simple, actionable language with built-in safety mechanisms.
 
 **Target Users:**
 - General public seeking health information
@@ -14,7 +14,7 @@ General Mode is a **consumer-friendly health information assistant** designed to
 - **Simple language**: No medical jargon
 - **Actionable advice**: Practical steps users can take
 - **Safety-first**: Clear guidance on when to see a doctor
-- **Evidence-based**: All information backed by trusted sources
+- **Evidence-based**: All information backed by trusted sources with text similarity reranking for maximum relevance
 - **Crisis detection**: Immediate safety response for self-harm queries
 
 ---
@@ -70,6 +70,7 @@ General Mode is a **consumer-friendly health information assistant** designed to
 │  ┌──────────────────────────────────────────────────────────────────────────────┐   │
 │  │                         EVIDENCE GATHERING                                    │   │
 │  │  • Same 57 database search as Doctor Mode                                    │   │
+│  │  • Text similarity reranking of ALL evidence sources                         │   │
 │  │  • Parallel search for maximum coverage                                      │   │
 │  │  • Returns EvidencePackage with all sources                                  │   │
 │  └──────────────────────────────────────────────────────────────────────────────┘   │
@@ -83,6 +84,7 @@ General Mode is a **consumer-friendly health information assistant** designed to
 │  │  • "Foods to Consider" section (when relevant)                               │   │
 │  │  • "Helpful Exercises" section (when relevant)                               │   │
 │  │  • Safety disclaimers                                                        │   │
+│  │  • Uses OpenAI GPT-4o-mini for cost-effective consumer responses             │   │
 │  └──────────────────────────────────────────────────────────────────────────────┘   │
 │                                                                                      │
 └─────────────────────────────────────────────────────────────────────────────────────┘
@@ -248,7 +250,7 @@ General Mode is a **consumer-friendly health information assistant** designed to
 
 ## Evidence Sources
 
-General Mode uses the **exact same evidence engine** as Doctor Mode:
+General Mode uses the **exact same evidence engine** as Doctor Mode, including comprehensive text similarity reranking:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────┐
@@ -272,11 +274,18 @@ General Mode uses the **exact same evidence engine** as Doctor Mode:
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘                     │
 │                                                                                      │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐                     │
-│  │ Tavily AI  │  │ MedlinePlus    │  │ Semantic Scholar│                     │
+│  │ Tavily AI      │  │ MedlinePlus    │  │ Semantic Scholar│                     │
 │  │ (Real-time)    │  │ (Consumer)     │  │ (Highly cited)  │                     │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘                     │
 │                                                                                      │
-│  The DIFFERENCE is in PRESENTATION, not evidence quality                            │
+│                                    ▼                                                │
+│                        ┌─────────────────────────┐                                 │
+│                        │  Text Similarity        │                                 │
+│                        │  Reranking              │                                 │
+│                        │  (ALL 57+ Sources)      │                                 │
+│                        └─────────────────────────┘                                 │
+│                                                                                      │
+│  The DIFFERENCE is in PRESENTATION, not evidence quality or ranking                 │
 │                                                                                      │
 └─────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -382,5 +391,5 @@ When explicit self-harm phrases detected:
 
 ---
 
-**Last Updated**: January 2026
-**Version**: 3.0 (with 57 Evidence Sources Integration)
+**Last Updated**: January 14, 2026
+**Version**: 3.1 (Smart Image Gateway + Crisis Detection)

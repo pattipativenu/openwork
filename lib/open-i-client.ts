@@ -25,8 +25,8 @@ export interface OpenISearchParams {
     startIndex?: number; // m parameter (default: 1)
 
     // Collection (coll parameter)
-    collection?: 'pmc' | 'cxr' | 'usc' | 'hmd' | 'mpx' | 'all';
-    // pmc: PubMed Central | cxr: Indiana U. Chest X-rays | usc: USC Orthopedic Surgical Anatomy
+    collection?: 'pmc' | 'usc' | 'hmd' | 'mpx' | 'all';
+    // pmc: PubMed Central | usc: USC Orthopedic Surgical Anatomy
     // hmd: Images from History of Medicine (NLM) | mpx: MedPix
 
     // Image Type (it parameter)
@@ -35,9 +35,9 @@ export interface OpenISearchParams {
     // ph: Photographs | p: PET | mc: Microscopy | m: MRI | g: Graphics | c: CT Scan
 
     // Article Type (at parameter)
-    articleType?: 'ab' | 'bk' | 'bf' | 'cr' | 'dp' | 'di' | 'ed' | 'ib' | 'in' | 'lt' | 'mr' | 'ma' | 'ne' | 'ob' | 'pr' | 'or' | 're' | 'ra' | 'rw' | 'sr' | 'rr' | 'os' | 'hs' | 'ot';
+    articleType?: 'ab' | 'bk' | 'bf' | 'cr' | 'dp' | 'di' | 'ed' | 'ib' | 'in' | 'lt' | 'mr' | 'ma' | 'ne' | 'ob' | 'pr' | 'or' | 're' | 'ra' | 'rw' | 'sr' | 'os' | 'hs' | 'ot';
     // ra: Research Article | rw: Review Article | cr: Case Report | sr: Systematic Review
-    // rr: Radiology Report | os: Orthopedic Slide | hs: Historical Slide
+    // os: Orthopedic Slide | hs: Historical Slide
 
     // Specialty (sp parameter)
     specialty?: 'b' | 'bc' | 'c' | 'ca' | 'cc' | 'd' | 'de' | 'dt' | 'e' | 'en' | 'eh' | 'f' | 'g' | 'ge' | 'gr' | 'gy' | 'h' | 'id' | 'im' | 'n' | 'ne' | 'nu' | 'o' | 'or' | 'ot' | 'p' | 'py' | 'pu' | 'r' | 's' | 't' | 'u' | 'v' | 'vi';
@@ -58,9 +58,9 @@ export interface OpenISearchParams {
     // by: Attribution | bync: Attribution NonCommercial
     // byncnd: Attribution NonCommercial NoDerivatives | byncsa: Attribution NonCommercial ShareAlike
 
-    // Subset (sub parameter)
-    subset?: 'b' | 'c' | 'e' | 's' | 'x';
-    // b: Basic Science | c: Clinical Journals | e: Ethics | s: Systematic Reviews | x: Chest X-rays
+    // Subset filter (basic science, clinical, systematic reviews)
+    subset?: 'b' | 'c' | 'e' | 's';
+    // b: Basic Science | c: Clinical Journals | e: Ethics | s: Systematic Reviews
 
     // Video (vid parameter)
     video?: 0 | 1; // 0: No | 1: Yes
@@ -79,6 +79,21 @@ export interface OpenIImage {
     license?: string; // License information (e.g., "CC BY 4.0", "Public Domain")
     articleType?: string;
     specialty?: string;
+}
+
+/**
+ * Check if a query is likely related to medical images
+ * Used to determine if Open-i image search should be triggered
+ */
+export function isImageQuery(query: string): boolean {
+    const imageKeywords = [
+        'image', 'imaging', 'diagram', 'illustration', 'anatomy', 'pathology', 'histology',
+        'microscopy', 'biopsy', 'photograph', 'picture', 'visual', 'scan',
+        'show me', 'what does', 'look like', 'appearance'
+    ];
+
+    const lowerQuery = query.toLowerCase();
+    return imageKeywords.some(keyword => lowerQuery.includes(keyword));
 }
 
 /**
@@ -305,91 +320,6 @@ export async function searchOpenIPathology(condition: string, specialty?: string
 }
 
 /**
- * Search Open-i for radiology images
- * Optimized for X-ray, CT, MRI, ultrasound images
- */
-export async function searchOpenIRadiology(query: string, modality?: 'x' | 'm' | 'u'): Promise<OpenIImage[]> {
-    return searchOpenI({
-        query,
-        maxResults: 3,
-        imageType: modality || 'x', // X-ray by default
-        articleType: 'rr', // Radiology reports
-        specialty: 'r', // Radiology specialty
-        searchIn: 't', // Search in titles
-        rankBy: 'r', // Newest first
-        subset: 'x' // Chest X-rays subset if applicable
-    });
-}
-
-/**
- * Search Open-i for systematic review figures
- * Optimized for high-quality evidence-based diagrams
- */
-export async function searchOpenISystematicReviews(topic: string): Promise<OpenIImage[]> {
-    return searchOpenI({
-        query: topic,
-        maxResults: 3,
-        imageType: 'xg', // Graphics/diagrams
-        articleType: 'sr', // Systematic reviews
-        searchIn: 't', // Search in titles
-        rankBy: 'r', // Newest first
-        subset: 's', // Systematic reviews subset
-        collection: 'pmc'
-    });
-}
-
-/**
- * Search Open-i for microscopy images
- * Optimized for cellular/tissue pathology images
- */
-export async function searchOpenIMicroscopy(condition: string, specialty?: string): Promise<OpenIImage[]> {
-    return searchOpenI({
-        query: condition,
-        maxResults: 3,
-        imageType: 'mc', // Microscopy
-        articleType: 'ra', // Research articles
-        searchIn: 'c', // Search in captions for context
-        rankBy: 'd', // Diagnosis-ranked
-        specialty: specialty as any,
-        collection: 'pmc'
-    });
-}
-
-/**
- * Search Open-i for CT scan images
- * Optimized for computed tomography images
- */
-export async function searchOpenICT(query: string, specialty?: string): Promise<OpenIImage[]> {
-    return searchOpenI({
-        query,
-        maxResults: 3,
-        imageType: 'c', // CT scans
-        articleType: 'rr', // Radiology reports
-        specialty: specialty as any,
-        searchIn: 't', // Search in titles
-        rankBy: 'r', // Newest first
-        collection: 'pmc'
-    });
-}
-
-/**
- * Search Open-i for ultrasound images
- * Optimized for ultrasound/sonography images
- */
-export async function searchOpenIUltrasound(query: string): Promise<OpenIImage[]> {
-    return searchOpenI({
-        query,
-        maxResults: 3,
-        imageType: 'u', // Ultrasound
-        articleType: 'rr', // Radiology reports
-        specialty: 'r', // Radiology
-        searchIn: 't', // Search in titles
-        rankBy: 'r', // Newest first
-        collection: 'pmc'
-    });
-}
-
-/**
  * Search Open-i for treatment-focused images
  * Optimized for treatment algorithms and clinical decision support
  */
@@ -450,23 +380,6 @@ export async function searchOpenIMedPix(condition: string): Promise<OpenIImage[]
         searchIn: 't', // Search in titles
         rankBy: 't', // Treatment-ranked
         license: 'by' // Attribution license for reuse
-    });
-}
-
-/**
- * Search Open-i for chest X-rays
- * Optimized for chest radiography from curated collection
- */
-export async function searchOpenIChestXray(condition: string): Promise<OpenIImage[]> {
-    return searchOpenI({
-        query: condition,
-        maxResults: 3,
-        imageType: 'x', // X-ray
-        collection: 'cxr', // Chest X-ray collection
-        subset: 'x', // Chest X-rays subset
-        searchIn: 'c', // Search in captions
-        rankBy: 'd', // Diagnosis-ranked
-        license: 'by' // Attribution license
     });
 }
 
@@ -563,7 +476,8 @@ export async function searchOpenIArticles(
         const response = await fetch(apiUrl.toString(), {
             headers: {
                 'Accept': 'application/json'
-            }
+            },
+            signal: AbortSignal.timeout(3000)
         });
 
         if (!response.ok) {
@@ -676,32 +590,22 @@ export async function searchOpenICaseReportArticles(query: string, maxResults: n
 }
 
 /**
- * Search Open-i for radiology reports
- * Optimized for radiology and imaging reports
- */
-export async function searchOpenIRadiologyReports(query: string, maxResults: number = 3): Promise<OpenIArticle[]> {
-    return searchOpenIArticles(query, maxResults, {
-        articleType: 'rr', // Radiology reports
-        specialty: 'r', // Radiology specialty
-        rankBy: 'd' // Diagnosis-ranked
-    });
-}
-
-/**
  * Optimize query for Open-i API
  * Open-i works best with short, focused medical terms (2-5 words)
  * Extracts key medical concepts from long clinical queries
  */
-function optimizeOpenIQuery(query: string): string {
+export function optimizeOpenIQuery(query: string): string {
     // If query is already short (< 50 chars), use as-is
     if (query.length < 50) {
         return query;
     }
 
-    // Extract key medical terms using regex patterns
+    // ENHANCED: Extract key medical terms using improved regex patterns
     const medicalTermPatterns = [
-        // Diseases and conditions (capitalized medical terms)
-        /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\b/g,
+        // Medical guidelines and organizations
+        /\b(ACC\/AHA|ESC|AHA|ACC|WHO|CDC|NICE|guidelines?|recommendations?)\b/gi,
+        // Cardiovascular terms
+        /\b(coronary|cardiac|heart|myocardial|infarction|angina|syndrome|NSTEMI|STEMI|ACS)\b/gi,
         // Common medical abbreviations
         /\b(MRI|CT|X-ray|EKG|ECG|PET|SPECT|ultrasound|biopsy|scan|imaging)\b/gi,
         // Anatomical terms
@@ -709,7 +613,9 @@ function optimizeOpenIQuery(query: string): string {
         // Pathology terms
         /\b(tumor|cancer|fracture|lesion|mass|nodule|cyst|hemorrhage|infarct|edema|stenosis|occlusion)\b/gi,
         // Specific diagnoses
-        /\b(meningioma|glioma|lymphoma|carcinoma|sarcoma|melanoma|leukemia|pneumonia|sepsis|stroke|MI|PE|DVT)\b/gi
+        /\b(meningioma|glioma|lymphoma|carcinoma|sarcoma|melanoma|leukemia|pneumonia|sepsis|stroke|MI|PE|DVT)\b/gi,
+        // Treatment terms
+        /\b(treatment|therapy|management|intervention|procedure|surgery|medication|drug)\b/gi
     ];
 
     const extractedTerms: string[] = [];
@@ -730,7 +636,9 @@ function optimizeOpenIQuery(query: string): string {
         term.includes('fracture') ||
         term.includes('infarct') ||
         term.includes('hemorrhage') ||
-        term.includes('stenosis')
+        term.includes('stenosis') ||
+        term.includes('coronary') ||
+        term.includes('cardiac')
     );
 
     // Build optimized query (2-5 words max)
@@ -740,9 +648,31 @@ function optimizeOpenIQuery(query: string): string {
     } else if (uniqueTerms.length > 0) {
         optimizedQuery = uniqueTerms.slice(0, 3).join(' ');
     } else {
-        // Fallback: take first 3-5 words from original query
-        const words = query.split(/\s+/).filter(w => w.length > 3);
-        optimizedQuery = words.slice(0, 4).join(' ');
+        // FIXED: Improved fallback for medical queries
+        const words = query.split(/\s+/);
+
+        // Skip common question words and short words
+        const skipWords = ['what', 'how', 'when', 'where', 'why', 'which', 'does', 'should', 'would', 'could', 'are', 'the', 'and', 'for', 'with', 'in', 'of', 'to', 'a', 'an'];
+        const medicalWords = words.filter(w =>
+            w.length > 3 &&
+            !skipWords.includes(w.toLowerCase()) &&
+            !/^\d+$/.test(w) // Skip pure numbers
+        );
+
+        if (medicalWords.length > 0) {
+            // Use medical terms, prioritizing longer/more specific terms
+            const sortedMedicalWords = medicalWords.sort((a, b) => b.length - a.length);
+            optimizedQuery = sortedMedicalWords.slice(0, 3).join(' ');
+        } else {
+            // Final fallback: use the most meaningful words from the original query
+            const meaningfulWords = words.filter(w => w.length > 4);
+            optimizedQuery = meaningfulWords.slice(0, 3).join(' ') || 'medical imaging';
+        }
+    }
+
+    // Ensure we never return empty or single-character queries
+    if (!optimizedQuery || optimizedQuery.length < 2) {
+        optimizedQuery = 'medical imaging';
     }
 
     console.log(`🔍 Open-i query optimization: "${query.slice(0, 100)}..." → "${optimizedQuery}"`);

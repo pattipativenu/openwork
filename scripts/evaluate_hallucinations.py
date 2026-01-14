@@ -3,7 +3,7 @@
 Hallucination Evaluation Script for MedGuidance-AI
 
 This script fetches traces from Arize Phoenix and evaluates them for hallucinations.
-It uses Gemini as the "judge" to verify if the AI's response is supported by the
+It uses OpenAI as the "judge" to verify if the AI's response is supported by the
 retrieved evidence.
 
 Usage:
@@ -11,7 +11,7 @@ Usage:
 
 Prerequisites:
     1. Phoenix server running: python scripts/start_phoenix.py
-    2. GEMINI_API_KEY set in environment
+    2. OPENAI_API_KEY set in environment
     3. Some traces collected in Phoenix
 """
 
@@ -22,7 +22,7 @@ from datetime import datetime
 # Check for required packages
 try:
     import phoenix as px
-    from google import genai
+    from openai import OpenAI
 except ImportError as e:
     print(f"❌ Missing required package: {e}")
     print("   Install with: pip install -r requirements.txt")
@@ -60,14 +60,13 @@ Only output the JSON, no other text.
 """
 
 
-def get_gemini_client():
-    """Initialize Gemini client using environment variable."""
-    api_key = os.environ.get("GEMINI_API_KEY")
+def get_openai_client():
+    """Initialize OpenAI client using environment variable."""
+    api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        raise ValueError("GEMINI_API_KEY not set in environment")
-    
-    client = genai.Client(api_key=api_key)
-    return client
+        raise ValueError("OPENAI_API_KEY not set in environment")
+
+    return OpenAI(api_key=api_key)
 
 
 def evaluate_trace_for_hallucination(trace_data: dict, client) -> dict:
@@ -76,7 +75,7 @@ def evaluate_trace_for_hallucination(trace_data: dict, client) -> dict:
     
     Args:
         trace_data: Dictionary containing 'input', 'output', and 'evidence' fields
-        client: Gemini client
+        client: OpenAI client
     
     Returns:
         Evaluation result dictionary
@@ -98,14 +97,16 @@ def evaluate_trace_for_hallucination(trace_data: dict, client) -> dict:
     )
     
     try:
-        # Call Gemini for evaluation
-        result = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt
+        # Call OpenAI for evaluation
+        result = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            temperature=0
         )
-        
+
         # Parse the JSON response
-        response_text = result.text.strip()
+        response_text = (result.choices[0].message.content or "").strip()
         
         # Handle markdown code blocks
         if response_text.startswith("```"):
@@ -196,10 +197,10 @@ def main():
     print("=" * 60)
     print()
     
-    # Initialize Gemini client
+    # Initialize OpenAI client
     try:
-        client = get_gemini_client()
-        print("✅ Gemini client initialized")
+        client = get_openai_client()
+        print("✅ OpenAI client initialized")
     except ValueError as e:
         print(f"❌ {e}")
         return

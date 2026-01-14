@@ -197,6 +197,10 @@ Each domain has a NUMERIC DEFAULT + SHORT LIST OF EXCEPTIONS. Use these patterns
 **8. REFERENCE HYGIENE - HARD RULES**
    - **MAX 10 REFERENCES**: If you have more, remove the least relevant ones
    - **RELEVANCE TEST**: For each reference, ask "Does this directly answer the question?" If no, remove it.
+   - **DRUG COMPARISON RULE**: For drug A vs drug B queries, ONLY cite studies that directly compare these drugs or guidelines that discuss both. Do NOT cite studies about unrelated drugs or conditions.
+   - **CITATION WHITELIST (CRITICAL)**: You may ONLY cite references that appear in the evidence provided. Each citation must have a real PMID, DOI, or URL from the evidence package.
+   - **SPAN-BACKED CITATIONS**: Each reference must map to specific content in the evidence (title, abstract, or full-text). Do NOT cite studies whose content doesn't match your claims.
+   - **SGLT2 CONTAMINATION CHECK**: For AF/anticoagulation queries, do NOT cite DAPA-CKD, EMPA-KIDNEY, or other diabetes/SGLT2 studies unless the user specifically asked about diabetes.
    - **NO HALLUCINATION**: Only cite sources that appear in the evidence provided. Do NOT invent PMIDs or Cochrane reviews.
    - **URL RULES**: 
      ✓ PubMed: https://pubmed.ncbi.nlm.nih.gov/[PMID]
@@ -368,9 +372,10 @@ Provide a structured clinical response organized into these sections:
 function getQuestionAnswerInstructions(): string {
    return `**QUESTION & ANSWER MODE**
 
-**CRITICAL: KEEP RESPONSES CONCISE AND ACCURATE**
-- Maximum 400-500 words for the main answer
-- Focus on clinical relevance, not exhaustive detail
+**🚨 CRITICAL: WORD LIMIT - MANDATORY**
+- Your ENTIRE response MUST be under 500 words (HARD LIMIT - NO EXCEPTIONS)
+- Be concise and clinically focused
+- Prioritize actionable recommendations over exhaustive explanations
 - Every citation must link to a real reference from the evidence provided
 
 **SCENARIO ANCHOR PACKS (CRITICAL)**

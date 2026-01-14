@@ -2,30 +2,24 @@
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, X, FileText, Image as ImageIcon, Send, Loader2 } from "lucide-react";
-import { useGemini } from "@/hooks/useGemini";
-import MarkdownTypewriter from "@/components/ui/markdown-typewriter";
-import { AnnotatedImage } from "@/components/ui/annotated-image";
-import { ThermalHeatmapImage } from "@/components/ui/thermal-heatmap-image";
-import { parseVisualFindings, parseVisualFindingsFlexible, cleanVisualFindings } from "@/lib/parse-visual-findings";
+import { X, FileText, Image as ImageIcon, Send, Loader2 } from "lucide-react";
+import { useOpenAI } from "@/hooks/useOpenAI";
 import { parseResponseIntoSections } from "@/lib/response-parser";
 import { EvidenceLogosScroll } from "@/components/ui/evidence-logos-scroll";
 import { ResponseActions } from "@/components/ui/response-actions";
 import { Sidebar } from "@/components/ui/sidebar";
 import { RotatingSuggestions } from "@/components/ui/rotating-suggestions";
 import { EvidenceLoadingCard } from "@/components/ui/evidence-loading-card";
-import { AddToCollectionModal } from "@/components/ui/add-to-collection-modal";
 import { ImageLightbox } from "@/components/ui/image-lightbox";
 import { FormattedQuestion } from "@/components/ui/formatted-question";
 import { UnifiedResponseRenderer } from "@/components/ui/unified-response-renderer";
 import { UnifiedCitationRenderer } from "@/components/ui/unified-citation-renderer";
 import { RotatingText } from "@/components/ui/rotating-text";
 import { UnifiedReferenceSection } from "@/components/ui/unified-reference-section";
-import ReactMarkdown from "react-markdown";
-import rehypeRaw from "rehype-raw";
 import { parseResponse } from "@/lib/citation/unified-parser";
 import { DOCTOR_MODE_CAPABILITIES, GENERAL_MODE_CAPABILITIES } from "@/lib/learn-more-capabilities";
 import { saveConversation, getConversationById } from "@/lib/storage";
+import StudyQuizRenderer from "@/components/ui/study-quiz-renderer";
 
 interface MedicalImage {
   url: string;
@@ -147,35 +141,7 @@ function ResponseTabs({
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }}
             >
-              {/* Show images ONLY in Diagnosis & Logic tab */}
-              {activeTab === 'diagnosis' && imageUrls && imageUrls.length > 0 && (
-                <div className="mb-6">
-                  <div className="mb-3 bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-2.5">
-                    <div className="flex items-center gap-2">
-                      <svg className="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                      </svg>
-                      <span className="text-amber-700 text-sm font-medium">
-                        AI assistant - Verify with radiologist
-                      </span>
-                    </div>
-                  </div>
-                  <div className={imageUrls.length > 1 ? 'grid grid-cols-2 gap-4 max-w-4xl mx-auto items-start' : 'max-w-2xl mx-auto'}>
-                    {imageUrls.map((imageUrl, imgIndex) => (
-                      <div key={imgIndex} className={imageUrls.length > 1 ? "rounded-lg h-[500px] flex items-center justify-center" : "rounded-lg"}>
-                        <ThermalHeatmapImage
-                          imageUrl={imageUrl}
-                          findings={visualFindings || []}
-                          fileIndex={imgIndex}
-                          showHeatmap={true}
-                          heatmapOpacity={0.55}
-                          compact={imageUrls.length > 1}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+
 
               {/* Use UnifiedCitationRenderer for each tab to get Sources badges */}
               <UnifiedCitationRenderer
@@ -245,7 +211,8 @@ function SimpleResponse({
   showFollowUpQuestions = true,
   medicalImages,
   conversationId,
-  mode
+  mode,
+  onQuestionSelect
 }: {
   response: string;
   modelUsed: string;
@@ -254,6 +221,7 @@ function SimpleResponse({
   medicalImages?: MedicalImage[];
   conversationId?: string;
   mode: 'doctor' | 'general';
+    onQuestionSelect?: (question: string) => void;
 }) {
   const [lightboxImage, setLightboxImage] = useState<{ url: string; title: string; source?: string; license?: string } | null>(null);
 
@@ -275,6 +243,7 @@ function SimpleResponse({
                       src={img.thumbnail || img.url}
                       alt={img.title}
                       className="w-full h-full object-contain group-hover:scale-105 transition-transform"
+                      style={{ imageRendering: '-webkit-optimize-contrast' }}
                       loading="lazy"
                     />
                     {/* Zoom icon on hover */}
@@ -304,6 +273,7 @@ function SimpleResponse({
         onComplete={onComplete}
         showFollowUpQuestions={showFollowUpQuestions}
         conversationId={conversationId}
+        onQuestionSelect={onQuestionSelect}
       />
 
       {/* Image Lightbox */}
@@ -467,22 +437,22 @@ export default function UnifiedDashboard() {
   const [modelUsed, setModelUsed] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [hasSubmittedQuery, setHasSubmittedQuery] = useState(false);
-  const [followUpQuery, setFollowUpQuery] = useState("");
   const [isResponseComplete, setIsResponseComplete] = useState(false);
-  const [currentQuestion, setCurrentQuestion] = useState("");
-  const [showThinkingDetails, setShowThinkingDetails] = useState(false);
   const [thinkingSteps, setThinkingSteps] = useState<string[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isStudyMode, setIsStudyMode] = useState(false);
+  const [showStudyDropdown, setShowStudyDropdown] = useState(false);
   const [conversationId, setConversationId] = useState<string>(() => `conv_${Date.now()}`);
   const historyRef = useRef<HTMLDivElement>(null);
 
-  const { sendMessage, loading, error, clearMessages } = useGemini({
+
+  const { sendMessage, loading, error, clearMessages } = useOpenAI({
     mode,
     onMessage: (message) => {
-      console.log("🔍 DEBUG: useGemini onMessage callback:", message);
+      console.log("🔍 DEBUG: useOpenAI onMessage callback:", message);
     },
     onError: (error) => {
-      console.log("🔍 DEBUG: useGemini onError callback:", error);
+      console.log("🔍 DEBUG: useOpenAI onError callback:", error);
     }
   });
 
@@ -588,11 +558,6 @@ export default function UnifiedDashboard() {
     const handleFollowUpQuestion = async (event: any) => {
       const question = event.detail as string;
 
-      // Directly handle the follow-up question
-      setCurrentQuestion(question);
-      setIsResponseComplete(false);
-      setShowThinkingDetails(false);
-
       // Show evidence gathering progress with detailed steps
       setThinkingSteps([]);
       setTimeout(() => setThinkingSteps(prev => [...prev, "✓ Analyzing query..."]), 50);
@@ -620,7 +585,7 @@ export default function UnifiedDashboard() {
       }, 100);
 
       // Send message
-      const result = await sendMessage(question, [], chatHistory);
+      const result = await sendMessage(question, [], chatHistory, 0, isStudyMode);
 
       if (result) {
         const assistantMessage: Message = {
@@ -681,9 +646,7 @@ export default function UnifiedDashboard() {
     if (!questionToSubmit.trim() && filesToSubmit.length === 0) return;
 
     setHasSubmittedQuery(true); // Mark that first query has been submitted
-    setCurrentQuestion(questionToSubmit); // Store the question to display
     setIsResponseComplete(false); // Reset completion state
-    setShowThinkingDetails(false); // Reset thinking details
 
     // Show evidence gathering progress with detailed steps
     setThinkingSteps([]);
@@ -737,7 +700,7 @@ export default function UnifiedDashboard() {
     });
 
     try {
-      const result = await sendMessage(questionToSubmit, filesToSubmit, chatHistory);
+      const result = await sendMessage(questionToSubmit, filesToSubmit, chatHistory, 0, isStudyMode);
 
       console.log("🔍 DEBUG: sendMessage returned:", {
         hasResult: !!result,
@@ -756,41 +719,11 @@ export default function UnifiedDashboard() {
           medicalImagesCount: result.medicalImages?.length || 0
         });
 
-        // Parse visual findings from response
-        let visualFindings: Array<{
-          finding: string;
-          severity: 'critical' | 'moderate' | 'mild';
-          coordinates: [number, number, number, number];
-          label: string;
-          fileIndex?: number;
-        }> = [];
-        if (imageUrls.length > 0) {
-          const parsed = parseVisualFindings(result.response);
-          const parsedFlexible = parseVisualFindingsFlexible(result.response);
-          const cleanedFindings = cleanVisualFindings([...parsed, ...parsedFlexible]);
-
-          // Convert to hook format
-          visualFindings = cleanedFindings.map(finding => ({
-            finding: finding.description,
-            severity: finding.severity as 'critical' | 'moderate' | 'mild',
-            coordinates: finding.boundingBoxes[0] ? [
-              finding.boundingBoxes[0].ymin,
-              finding.boundingBoxes[0].xmin,
-              finding.boundingBoxes[0].ymax,
-              finding.boundingBoxes[0].xmax
-            ] as [number, number, number, number] : [0, 0, 0, 0] as [number, number, number, number],
-            label: finding.description,
-            fileIndex: finding.fileIndex
-          }));
-        }
-
         // Add assistant response to history
         const assistantMessage: Message = {
           role: "assistant",
           content: result.response,
           timestamp: new Date(),
-          imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
-          visualFindings: visualFindings.length > 0 ? visualFindings : undefined,
           medicalImages: result.medicalImages, // Include fetched medical images
         };
 
@@ -838,55 +771,10 @@ export default function UnifiedDashboard() {
         stack: error.stack
       });
 
-      // We don't have a local error setter, rely on console logs and useGemini error state
+      // We don't have a local error setter, rely on console logs and useOpenAI error state
     }
   };
 
-  const handleFollowUpSubmit = async () => {
-    if (!followUpQuery.trim()) return;
-
-    setCurrentQuestion(followUpQuery); // Update current question
-    setIsResponseComplete(false); // Reset completion state
-
-    // Add user message to history
-    const userMessage: Message = {
-      role: "user",
-      content: followUpQuery,
-      timestamp: new Date(),
-    };
-
-    setChatHistory(prev => [...prev, userMessage]);
-    setCurrentResponse(""); // Clear previous response
-
-    // Clear follow-up input immediately
-    setFollowUpQuery("");
-
-    // Scroll to show the new question
-    setTimeout(() => {
-      const conversationElements = document.querySelectorAll('[data-qa-pair]');
-      if (conversationElements.length > 0) {
-        const lastQuestion = conversationElements[conversationElements.length - 1];
-        lastQuestion.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
-    }, 100);
-
-    // Send message with conversation history
-    const result = await sendMessage(followUpQuery, [], chatHistory);
-
-    if (result) {
-      // Add assistant response to history
-      const assistantMessage: Message = {
-        role: "assistant",
-        content: result.response,
-        timestamp: new Date(),
-        medicalImages: result.medicalImages, // Include fetched medical images
-      };
-
-      setChatHistory(prev => [...prev, assistantMessage]);
-      setCurrentResponse(result.response);
-      setModelUsed(result.model);
-    }
-  };
 
   // Helper function to convert File to base64
   const fileToBase64 = (file: File): Promise<string> => {
@@ -901,11 +789,6 @@ export default function UnifiedDashboard() {
     });
   };
 
-  const clearHistory = () => {
-    setChatHistory([]);
-    setCurrentResponse("");
-    setModelUsed("");
-  };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -1063,10 +946,16 @@ export default function UnifiedDashboard() {
               </div>
             )}
 
-            {/* Initial Search Container - Hide after first query */}
-            {!hasSubmittedQuery && (
-              <div className="relative">
-                {/* Uploaded Files Display - Above input as "hanging" thumbnails */}
+
+            {/* Persistent Search Container */}
+            <div className={`
+              ${hasSubmittedQuery
+                ? "fixed bottom-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md border-t border-gray-100 p-4"
+                : "relative mt-6"}
+              transition-all duration-500
+            `}>
+              <div className={hasSubmittedQuery ? "max-w-4xl mx-auto" : ""}>
+                {/* Uploaded Files Display */}
                 {uploadedFiles.length > 0 && (
                   <motion.div
                     initial={{ opacity: 0, y: -10 }}
@@ -1086,45 +975,27 @@ export default function UnifiedDashboard() {
                           className="relative group"
                         >
                           {isImage ? (
-                            // Compact image thumbnail with filename
-                            <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-2 py-1.5 shadow-sm hover:border-blue-400 hover:shadow-md transition-all">
-                              <div className="relative w-8 h-8 rounded overflow-hidden shrink-0 bg-gray-100">
-                                <img
-                                  src={imageUrl!}
-                                  alt={file.name}
-                                  className="w-full h-full object-cover"
-                                />
+                            <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-2 py-1.5 shadow-sm hover:border-blue-400">
+                              <div className="relative w-8 h-8 rounded overflow-hidden bg-gray-100">
+                                <img src={imageUrl!} alt={file.name} className="w-full h-full object-cover" />
                               </div>
                               <div className="flex flex-col min-w-0">
-                                <span className="text-xs font-medium text-gray-700 truncate max-w-[120px]">
-                                  {file.name}
-                                </span>
-                                <span className="text-[10px] text-gray-500">{fileSizeKB} KB</span>
+                                <span className="text-xs font-medium text-gray-700 truncate max-w-[120px]">{file.name}</span>
                               </div>
-                              <button
-                                onClick={() => removeFile(index)}
-                                className="ml-1 hover:bg-gray-100 rounded-full p-0.5 transition-colors shrink-0"
-                              >
-                                <X className="w-3.5 h-3.5 text-gray-500 hover:text-red-600" />
+                              <button onClick={() => removeFile(index)} className="ml-1 p-0.5 hover:bg-gray-100 rounded-full">
+                                <X className="w-3.5 h-3.5 text-gray-400" />
                               </button>
                             </div>
                           ) : (
-                            // Document chip
-                            <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-2 py-1.5 shadow-sm hover:border-blue-400 hover:shadow-md transition-all">
-                              <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center shrink-0">
+                              <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-2 py-1.5 shadow-sm hover:border-blue-400">
+                                <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center">
                                 {getFileIcon(file)}
                               </div>
                               <div className="flex flex-col min-w-0">
-                                <span className="text-xs font-medium text-gray-700 truncate max-w-[120px]">
-                                  {file.name}
-                                </span>
-                                <span className="text-[10px] text-gray-500">{fileSizeKB} KB</span>
+                                  <span className="text-xs font-medium text-gray-700 truncate max-w-[120px]">{file.name}</span>
                               </div>
-                              <button
-                                onClick={() => removeFile(index)}
-                                className="ml-1 hover:bg-gray-100 rounded-full p-0.5 transition-colors shrink-0"
-                              >
-                                <X className="w-3.5 h-3.5 text-gray-500 hover:text-red-600" />
+                                <button onClick={() => removeFile(index)} className="ml-1 p-0.5 hover:bg-gray-100 rounded-full">
+                                  <X className="w-3.5 h-3.5 text-gray-400" />
                               </button>
                             </div>
                           )}
@@ -1134,108 +1005,107 @@ export default function UnifiedDashboard() {
                   </motion.div>
                 )}
 
-                {/* Simple Clean Search Box - No Tabs */}
+                {/* Search Box */}
                 <div
                   className={`
                     relative bg-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] 
                     border transition-all duration-300 z-20 
-                    min-h-[220px] flex flex-col mx-4
+                    ${hasSubmittedQuery ? 'min-h-[60px]' : 'min-h-[200px]'} flex flex-col
                     ${mode === 'doctor' ? 'border-blue-500' : 'border-purple-500'}
                   `}
                   onDragOver={handleDragOver}
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop}
                 >
-                  {/* Main text input area */}
-                  <div className="px-6 pt-6 pb-4">
+                  <div className={`px-6 ${hasSubmittedQuery ? 'py-2' : 'pt-6 pb-2'}`}>
                     <textarea
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
                       onKeyPress={handleKeyPress}
                       placeholder={
-                        mode === 'doctor'
-                          ? "Ask about clinical guidelines, drug information, differential diagnosis..."
-                          : "Ask about symptoms, healthy habits, when to see a doctor..."
+                        hasSubmittedQuery
+                          ? "Ask a follow-up question..."
+                          : mode === 'doctor'
+                            ? "Ask about clinical guidelines, drug information, differential diagnosis..."
+                            : "Ask about symptoms, healthy habits, when to see a doctor..."
                       }
                       className="w-full text-gray-900 placeholder-gray-400 outline-none text-base resize-none overflow-y-auto leading-relaxed border-none focus:ring-0"
                       style={{
                         fontFamily: 'system-ui, -apple-system, sans-serif',
-                        minHeight: '120px',
+                        minHeight: hasSubmittedQuery ? '40px' : '100px',
                         maxHeight: '200px',
                         fontSize: '16px'
                       }}
                       disabled={loading}
-                      rows={5}
+                      rows={hasSubmittedQuery ? 1 : 4}
                     />
                   </div>
 
-                  {/* Bottom toolbar with icons */}
-                  <div className="flex items-center justify-between px-6 pb-4 pt-2 border-t border-gray-100">
-                    {/* Left side - Upload button */}
-                    <div className="flex items-center gap-3">
-                      <label className="cursor-pointer group">
-                        <input
-                          type="file"
-                          multiple
-                          accept="image/*,.pdf,.doc,.docx"
-                          className="hidden"
-                          onChange={(e) => handleFileUpload(e.target.files)}
-                        />
-                        <div className={`flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${mode === 'doctor'
-                          ? "text-gray-600 hover:text-blue-600 hover:bg-blue-50"
-                          : "text-gray-600 hover:text-purple-600 hover:bg-purple-50"
-                          }`}>
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                          </svg>
-                          <span>Add tabs or files</span>
+                  <div className={`flex items-center justify-between px-6 pb-3 pt-2 ${!hasSubmittedQuery ? 'border-t border-gray-100' : ''}`}>
+                    <div className="flex items-center gap-2">
+                      {mode === 'doctor' ? (
+                        <div className="relative flex items-center gap-2">
+                          {isStudyMode && (
+                            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-lg text-sm font-medium text-blue-700">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                              </svg>
+                              <span className={hasSubmittedQuery ? 'hidden sm:inline' : ''}>Study</span>
+                              <button onClick={() => setIsStudyMode(false)} className="p-0.5 hover:bg-blue-100 rounded">
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          )}
+                          {!hasSubmittedQuery && (
+                            <button
+                              onClick={() => setShowStudyDropdown(!showStudyDropdown)}
+                              className="flex items-center justify-center w-8 h-8 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            >
+                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" />
+                              </svg>
+                            </button>
+                          )}
+                          {showStudyDropdown && (
+                            <div className="absolute left-0 bottom-full mb-2 bg-white border border-gray-200 rounded-xl shadow-lg py-1 z-50 min-w-[180px]">
+                              <button
+                                onClick={() => { setIsStudyMode(true); setShowStudyDropdown(false); }}
+                                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors"
+                              >
+                                <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                                </svg>
+                                <span className="font-medium">Study and Learn</span>
+                              </button>
+                            </div>
+                          )}
                         </div>
-                      </label>
+                      ) : (
+                        <label className="cursor-pointer group">
+                            <input type="file" multiple accept="image/*,.pdf,.doc,.docx" className="hidden" onChange={(e) => handleFileUpload(e.target.files)} />
+                            <div className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg text-gray-600 hover:text-purple-600 hover:bg-purple-50">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                              </svg>
+                              <span className={hasSubmittedQuery ? 'hidden md:inline' : ''}>Add files</span>
+                            </div>
+                          </label>
+                      )}
                     </div>
 
-                    {/* Right side - Microphone and Submit */}
                     <div className="flex items-center gap-2">
-                      {/* Microphone Button */}
-                      <button className={`w-8 h-8 flex items-center justify-center rounded-lg transition-colors ${mode === 'doctor'
-                        ? "text-gray-400 hover:text-blue-600 hover:bg-blue-50"
-                        : "text-gray-400 hover:text-purple-600 hover:bg-purple-50"
-                        }`}>
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                        </svg>
-                      </button>
-
-                      {/* Submit Button */}
                       <button
                         onClick={() => handleSubmit()}
                         disabled={(!query.trim() && uploadedFiles.length === 0) || loading}
-                        className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-300 hover:scale-105 disabled:scale-100 disabled:cursor-not-allowed disabled:bg-gray-300 ${mode === 'doctor'
-                          ? "bg-blue-600 hover:bg-blue-700"
-                          : "bg-purple-600 hover:bg-purple-700"
-                          }`}
+                        className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${mode === 'doctor' ? "bg-blue-600" : "bg-purple-600"}`}
                       >
-                        {loading ? (
-                          <Loader2 className="w-4 h-4 text-white animate-spin" />
-                        ) : (
-                          <Send className="w-4 h-4 text-white" />
-                        )}
+                        {loading ? <Loader2 className="w-4 h-4 text-white animate-spin" /> : <Send className="w-4 h-4 text-white" />}
                       </button>
                     </div>
                   </div>
-
-
-                  {/* Drag & Drop Overlay */}
-                  {
-                    isDragging && (
-                      <div className={`absolute inset-0 border-2 border-dashed rounded-2xl flex items-center justify-center pointer-events-none z-20 ${mode === 'doctor' ? "bg-blue-50/90 border-blue-400" : "bg-purple-50/90 border-purple-400"
-                        }`}>
-                        <p className={`font-medium ${mode === 'doctor' ? "text-blue-600" : "text-purple-600"}`}>Drop files here</p>
-                      </div>
-                    )
-                  }
                 </div>
               </div>
-            )}
+            </div>
 
             {/* Rotating Quick Action Buttons */}
             {!hasSubmittedQuery && (
@@ -1295,14 +1165,13 @@ export default function UnifiedDashboard() {
 
             {/* Conversation History Display */}
             {hasSubmittedQuery && (() => {
-              // Group chat history into Q&A pairs - improved logic
+              // Group chat history into Q&A pairs
               const qaPairs: Array<{ question: Message, answer: Message | null }> = [];
 
               for (let i = 0; i < chatHistory.length; i++) {
                 const message = chatHistory[i];
 
                 if (message.role === "user") {
-                  // Look for the next assistant message
                   let assistantMessage: Message | null = null;
                   for (let j = i + 1; j < chatHistory.length; j++) {
                     if (chatHistory[j].role === "assistant") {
@@ -1318,29 +1187,12 @@ export default function UnifiedDashboard() {
                 }
               }
 
-              // Debug logging
-              console.log("🔍 DEBUG: Chat History Length:", chatHistory.length);
-              console.log("🔍 DEBUG: Q&A Pairs:", qaPairs.length);
-              console.log("🔍 DEBUG: Loading state:", loading);
-              console.log("🔍 DEBUG: Current Response Length:", currentResponse?.length || 0);
-              console.log("🔍 DEBUG: Q&A Pairs Detail:", qaPairs.map((pair, idx) => ({
-                pairIndex: idx,
-                hasQuestion: !!pair.question,
-                questionContent: pair.question?.content?.substring(0, 50) + "...",
-                hasAnswer: !!pair.answer,
-                answerContent: pair.answer?.content?.substring(0, 50) + "...",
-                answerLength: pair.answer?.content?.length || 0
-              })));
-
-              const lastUserMessage = chatHistory[chatHistory.length - 2];
-              const hasAttachments = lastUserMessage?.files && lastUserMessage.files.length > 0;
-
               return (
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.3 }}
-                  className="mt-8 space-y-8"
+                  className="space-y-12 mb-32 px-4"
                 >
                   {/* Display all Q&A pairs */}
                   {qaPairs.map((pair, pairIndex) => {
@@ -1350,62 +1202,33 @@ export default function UnifiedDashboard() {
                     return (
                       <React.Fragment key={pairIndex}>
                         <div className="space-y-6" data-qa-pair={pairIndex}>
-                          {/* Question Display - Formatted for clinical questions */}
-                          {!hasAttachmentsInPair && (
-                            <FormattedQuestion content={pair.question.content} />
-                          )}
+                          {/* Question Display */}
+                          <FormattedQuestion content={pair.question.content} />
 
-                          {/* User Query Section - Only show if there are attachments */}
-                          {hasAttachmentsInPair && (
-                            <div className="bg-gray-50 border-2 border-gray-200 rounded-2xl shadow-lg overflow-hidden">
-                              <div className="bg-gray-100 px-6 py-3 border-b border-gray-200">
-                                <h3 className="text-sm font-semibold text-gray-900">Your Question</h3>
-                              </div>
-                              <div className="px-6 py-4">
-                                <p className="text-gray-900 mb-4">{pair.question.content}</p>
-
-                                {/* Show uploaded images */}
-                                {pair.question.imageUrls && pair.question.imageUrls.length > 0 && (
-                                  <div className="grid grid-cols-2 gap-3 mt-4 max-w-2xl">
-                                    {pair.question.imageUrls.map((imageUrl, idx) => (
-                                      <div key={idx} className="relative rounded-lg overflow-hidden border border-gray-200 max-h-[200px]">
-                                        <img
-                                          src={`data:image/jpeg;base64,${imageUrl}`}
-                                          alt={`Uploaded image ${idx + 1}`}
-                                          className="w-full h-full object-cover"
-                                        />
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Thinking Indicator - Show right under question, before card */}
+                          {/* Thinking Indicator */}
                           {isLastPair && loading && (
-                            <div className="flex items-center gap-3 mb-4">
-                              <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                              <span className="text-sm text-gray-600">
-                                {thinkingSteps.length > 0 ? thinkingSteps[thinkingSteps.length - 1] : "Analyzing query..."}
-                              </span>
+                            <div className="flex flex-col gap-4">
+                              <div className="flex items-center gap-3">
+                                <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                                <span className="text-sm text-gray-600">
+                                  {thinkingSteps.length > 0 ? thinkingSteps[thinkingSteps.length - 1] : "Analyzing query..."}
+                                </span>
+                              </div>
+                              <EvidenceLoadingCard isLoading={true} mode="doctor" />
                             </div>
-                          )}
-
-                          {/* Evidence Loading Card - Show while gathering evidence */}
-                          {isLastPair && loading && (
-                            <EvidenceLoadingCard
-                              isLoading={loading}
-                              mode="doctor"
-                            />
                           )}
 
                           {/* AI Response */}
                           {(pair.answer || (isLastPair && currentResponse && !loading)) && (
-                            <>
-                              {hasAttachmentsInPair ? (
+                            <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
+                              {isStudyMode && mode === 'doctor' ? (
+                                <StudyQuizRenderer
+                                  quizResponse={pair.answer?.content || currentResponse}
+                                  isComplete={!loading || !!pair.answer}
+                                />
+                              ) : hasAttachmentsInPair ? (
                                 <ResponseTabs
-                                  response={pair.answer?.content || (isLastPair ? currentResponse : '') || ''}
+                                    response={pair.answer?.content || currentResponse}
                                   modelUsed={modelUsed}
                                   imageUrls={pair.question.imageUrls}
                                   visualFindings={pair.answer?.visualFindings}
@@ -1414,22 +1237,22 @@ export default function UnifiedDashboard() {
                                 />
                               ) : (
                                 <SimpleResponse
-                                  response={pair.answer?.content || (isLastPair ? currentResponse : '') || ''}
+                                      response={pair.answer?.content || currentResponse}
                                   modelUsed={modelUsed}
                                   onComplete={() => isLastPair && setIsResponseComplete(true)}
                                   showFollowUpQuestions={isLastPair}
                                   medicalImages={pair.answer?.medicalImages}
                                   conversationId={conversationId}
                                   mode={mode}
+                                      onQuestionSelect={(q) => setQuery(q)}
                                 />
                               )}
-                            </>
+                            </div>
                           )}
                         </div>
 
-                        {/* Separator between Q&A pairs - not shown after last pair */}
                         {!isLastPair && (
-                          <div className="my-8 border-t border-gray-200"></div>
+                          <div className="my-12 border-b border-gray-100"></div>
                         )}
                       </React.Fragment>
                     );
@@ -1437,6 +1260,7 @@ export default function UnifiedDashboard() {
                 </motion.div>
               );
             })()}
+
 
             {/* Info Text and Evidence Logos - Hide after first query */}
             {!hasSubmittedQuery && (
@@ -1463,46 +1287,6 @@ export default function UnifiedDashboard() {
           </motion.div>
         </main>
 
-        {/* Sticky Bottom Input Bar - Show after response is complete for ALL modes (Q&A and Image Analysis) */}
-        {hasSubmittedQuery && isResponseComplete && chatHistory.length > 0 && (
-          <div className="sticky bottom-0 bg-white border-t border-gray-200 shadow-lg z-40">
-            <div className="max-w-4xl mx-auto px-6 py-4">
-              <div className="flex items-center gap-3 bg-gray-50 border-2 border-gray-200 rounded-full px-6 py-3 focus-within:border-blue-400 transition-colors">
-                <textarea
-                  value={followUpQuery}
-                  onChange={(e) => setFollowUpQuery(e.target.value)}
-                  onKeyPress={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      handleFollowUpSubmit();
-                    }
-                  }}
-                  placeholder={chatHistory[chatHistory.length - 2]?.files ? "Ask a follow-up question about this scan..." : "Ask a follow-up question..."}
-                  className="flex-1 bg-transparent text-gray-900 placeholder-gray-400 outline-none text-base resize-none overflow-y-auto"
-                  disabled={loading}
-                  rows={1}
-                  style={{ minHeight: '24px', maxHeight: '180px' }}
-                  onInput={(e) => {
-                    const target = e.target as HTMLTextAreaElement;
-                    target.style.height = '24px';
-                    target.style.height = Math.min(target.scrollHeight, 180) + 'px';
-                  }}
-                />
-                <button
-                  onClick={handleFollowUpSubmit}
-                  disabled={!followUpQuery.trim() || loading}
-                  className="w-10 h-10 rounded-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 flex items-center justify-center transition-all duration-300 hover:scale-105 disabled:scale-100 disabled:cursor-not-allowed"
-                >
-                  {loading ? (
-                    <Loader2 className="w-5 h-5 text-white animate-spin" />
-                  ) : (
-                    <Send className="w-5 h-5 text-white" />
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div >
   );

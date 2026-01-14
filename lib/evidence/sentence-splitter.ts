@@ -51,7 +51,7 @@ export class SentenceSplitter {
     // Replace abbreviations temporarily to avoid false splits
     let processedText = text;
     const replacements: Map<string, string> = new Map();
-    
+
     abbreviations.forEach((abbr, index) => {
       const placeholder = `__ABBR${index}__`;
       const pattern = new RegExp(`\\b${abbr}\\.`, 'g');
@@ -71,12 +71,12 @@ export class SentenceSplitter {
       if (i + 1 < parts.length) {
         sentence += parts[i + 1]; // Add back the punctuation
       }
-      
+
       // Restore abbreviations
       replacements.forEach((original, placeholder) => {
         sentence = sentence.replace(new RegExp(placeholder, 'g'), original);
       });
-      
+
       const trimmed = sentence.trim();
       if (trimmed.length > 0) {
         sentences.push(trimmed);
@@ -96,7 +96,7 @@ export class SentenceSplitter {
    */
   createChunks(article: PubMedArticle, includeContext: boolean = true): Chunk[] {
     const chunks: Chunk[] = [];
-    
+
     // Get abstract text
     const abstractText = article.abstract || '';
     if (!abstractText) {
@@ -142,12 +142,12 @@ export class SentenceSplitter {
    */
   createChunksFromArticles(articles: PubMedArticle[], includeContext: boolean = true): Chunk[] {
     const allChunks: Chunk[] = [];
-    
+
     for (const article of articles) {
       const chunks = this.createChunks(article, includeContext);
       allChunks.push(...chunks);
     }
-    
+
     return allChunks;
   }
 
@@ -172,7 +172,7 @@ export class SentenceSplitter {
   reconstructAbstract(chunks: Chunk[]): string {
     // Sort by sentence index
     const sorted = [...chunks].sort((a, b) => a.sentenceIndex - b.sentenceIndex);
-    
+
     // Join sentences with space
     return sorted.map(chunk => chunk.text).join(' ');
   }
@@ -203,3 +203,141 @@ export function createChunksFromArticles(
   const splitter = getSentenceSplitter();
   return splitter.createChunksFromArticles(articles, includeContext);
 }
+
+// ============================================================================
+// ABSTRACT CHUNKING (Phase 3: Online Chunking System)
+// ============================================================================
+
+/**
+ * AbstractChunk - A multi-sentence chunk from an abstract
+ * Groups 2-3 sentences together for better context while maintaining provenance
+ */
+export interface AbstractChunk {
+  id: string;               // Format: "PMID:12345:AC:0"
+  pmid: string;
+  text: string;
+  sentenceIndices: number[];
+  title: string;
+  source: string;
+  year?: string;
+  journal?: string;
+  doi?: string;
+  score?: number;           // Populated after reranking
+}
+
+/**
+ * Create multi-sentence abstract chunks from a PubMed article
+ * Groups sentences into chunks of 2-3 sentences for better context
+ * 
+ * @param article - PubMed article with abstract
+ * @param sentencesPerChunk - Number of sentences per chunk (default: 2)
+ * @param overlap - Number of sentences to overlap between chunks (default: 1)
+ * @returns Array of AbstractChunks
+ */
+export function createAbstractChunks(
+  article: PubMedArticle,
+  sentencesPerChunk: number = 2,
+  overlap: number = 1
+): AbstractChunk[] {
+  const chunks: AbstractChunk[] = [];
+  const splitter = getSentenceSplitter();
+
+  const abstractText = article.abstract || '';
+  if (!abstractText) {
+    return chunks;
+  }
+
+  const sentences = splitter.splitIntoSentences(abstractText);
+  if (sentences.length === 0) {
+    return chunks;
+  }
+
+  // If abstract is very short, return as single chunk
+  if (sentences.length <= sentencesPerChunk) {
+    chunks.push({
+      id: `PMID:${article.pmid}:AC:0`,
+      pmid: article.pmid,
+      text: sentences.join(' '),
+      sentenceIndices: sentences.map((_, i) => i),
+      title: article.title,
+      source: 'pubmed',
+      year: article.publicationDate?.split('-')[0],
+      journal: article.journal,
+      doi: article.doi,
+    });
+    return chunks;
+  }
+
+  // Create overlapping chunks
+  const step = Math.max(1, sentencesPerChunk - overlap);
+  let chunkIndex = 0;
+
+  for (let i = 0; i < sentences.length; i += step) {
+    const chunkSentences = sentences.slice(i, i + sentencesPerChunk);
+    const sentenceIndices = Array.from(
+      { length: chunkSentences.length },
+      (_, j) => i + j
+    );
+
+    chunks.push({
+      id: `PMID:${article.pmid}:AC:${chunkIndex}`,
+      pmid: article.pmid,
+      text: chunkSentences.join(' '),
+      sentenceIndices,
+      title: article.title,
+      source: 'pubmed',
+      year: article.publicationDate?.split('-')[0],
+      journal: article.journal,
+      doi: article.doi,
+    });
+
+    chunkIndex++;
+
+    // Stop if we've covered all sentences
+    if (i + sentencesPerChunk >= sentences.length) {
+      break;
+    }
+  }
+
+  return chunks;
+}
+
+/**
+ * Create abstract chunks from multiple PubMed articles
+ * 
+ * @param articles - Array of PubMed articles
+ * @param sentencesPerChunk - Number of sentences per chunk (default: 2)
+ * @returns Array of AbstractChunks from all articles
+ */
+export function createAbstractChunksFromArticles(
+  articles: PubMedArticle[],
+  sentencesPerChunk: number = 2
+): AbstractChunk[] {
+  const allChunks: AbstractChunk[] = [];
+
+  for (const article of articles) {
+    const chunks = createAbstractChunks(article, sentencesPerChunk);
+    allChunks.push(...chunks);
+  }
+
+  console.log(`[SentenceSplitter] Created ${allChunks.length} abstract chunks from ${articles.length} articles`);
+  return allChunks;
+}
+
+/**
+ * Convert AbstractChunks to ChunkForRerank format for BGE reranking
+ */
+export function abstractChunksToRerankFormat(
+  chunks: AbstractChunk[]
+): Array<{ id: string; title: string; text: string; metadata: { pmid: string; source: string } }> {
+  return chunks.map(c => ({
+    id: c.id,
+    title: `${c.title} – Abstract (sentences ${c.sentenceIndices[0] + 1}-${c.sentenceIndices[c.sentenceIndices.length - 1] + 1})`,
+    text: c.text,
+    metadata: {
+      pmid: c.pmid,
+      source: c.source,
+    },
+  }));
+}
+

@@ -26,7 +26,7 @@ async function ncbiRateLimitedFetch(url: string): Promise<Response> {
         await new Promise(resolve => setTimeout(resolve, NCBI_REQUEST_DELAY - timeSinceLastRequest));
     }
     lastNCBIRequestTime = Date.now();
-    return fetch(url);
+    return fetch(url, { signal: AbortSignal.timeout(5000) });
 }
 
 /**
@@ -45,6 +45,24 @@ export interface FullTextSection {
     heading: string;
     content: string;
     type: 'abstract' | 'introduction' | 'methods' | 'results' | 'discussion' | 'conclusion' | 'other';
+}
+
+/**
+ * ArticleChunk - A granular chunk of text from an article section
+ * Used for chunk-level reranking and more precise evidence attribution
+ */
+export interface ArticleChunk {
+    id: string;              // Format: pmid-sectionType-chunkIndex
+    pmid: string;
+    title: string;
+    journal?: string;
+    year?: number;
+    sectionType: 'abstract' | 'introduction' | 'methods' | 'results' | 'discussion' | 'conclusion' | 'other';
+    sectionHeading: string;
+    chunkIndex: number;
+    text: string;
+    source: 'pmc' | 'doi' | 'abstract';
+    score?: number;          // Populated after reranking
 }
 
 /**
@@ -263,10 +281,13 @@ export async function fetchFullText(
             let source: FullTextResult['source'] = 'none';
 
             // Strategy 1: Try DOI via Unpaywall
+            // DISABLED: Currently returns null and adds latency
+            /*
             if (doi) {
                 fullText = await fetchViaUnpaywall(doi);
                 if (fullText) source = 'doi';
             }
+            */
 
             // Strategy 2: Try PMC
             if (!fullText) {
@@ -386,3 +407,232 @@ export function formatFullTextForPrompt(
 
     return formatted;
 }
+
+// ============================================================================
+// CHUNK-BASED PROCESSING (Phase 1: Online Chunking System)
+// ============================================================================
+
+/**
+ * Split text into overlapping chunks at sentence boundaries
+ * @param text - The text to split
+ * @param maxChunkChars - Maximum characters per chunk (default: 1000)
+ * @param overlapChars - Number of characters to overlap between chunks (default: 150)
+ * @returns Array of text chunks
+ */
+export function splitTextIntoChunks(
+    text: string,
+    maxChunkChars: number = 1000,
+    overlapChars: number = 150
+): string[] {
+    if (!text || text.trim().length === 0) {
+        return [];
+    }
+
+    const chunks: string[] = [];
+    const sentences = text.split(/(?<=[.!?])\s+/);
+
+    let currentChunk = '';
+    let lastChunkEnd = '';
+
+    for (const sentence of sentences) {
+        const trimmedSentence = sentence.trim();
+        if (!trimmedSentence) continue;
+
+        // If adding this sentence would exceed max, save current chunk and start new one
+        if (currentChunk.length + trimmedSentence.length + 1 > maxChunkChars && currentChunk.length > 0) {
+            chunks.push(currentChunk.trim());
+
+            // Start new chunk with overlap from end of previous chunk
+            const words = currentChunk.split(/\s+/);
+            const overlapWords = [];
+            let overlapLen = 0;
+            for (let i = words.length - 1; i >= 0 && overlapLen < overlapChars; i--) {
+                overlapWords.unshift(words[i]);
+                overlapLen += words[i].length + 1;
+            }
+            lastChunkEnd = overlapWords.join(' ');
+            currentChunk = lastChunkEnd + ' ' + trimmedSentence;
+        } else {
+            currentChunk = currentChunk ? currentChunk + ' ' + trimmedSentence : trimmedSentence;
+        }
+    }
+
+    // Add final chunk
+    if (currentChunk.trim().length > 0) {
+        chunks.push(currentChunk.trim());
+    }
+
+    return chunks;
+}
+
+/**
+ * Priority weights for different section types
+ * Higher priority sections get more chunks
+ */
+const SECTION_PRIORITY: Record<FullTextSection['type'], { maxChunks: number; chunkSize: number }> = {
+    'results': { maxChunks: 5, chunkSize: 1000 },
+    'discussion': { maxChunks: 4, chunkSize: 1000 },
+    'conclusion': { maxChunks: 3, chunkSize: 800 },
+    'abstract': { maxChunks: 2, chunkSize: 800 },
+    'methods': { maxChunks: 2, chunkSize: 600 },
+    'introduction': { maxChunks: 2, chunkSize: 600 },
+    'other': { maxChunks: 1, chunkSize: 500 },
+};
+
+/**
+ * Create granular chunks from a full-text result
+ * Prioritizes results/discussion/conclusion sections
+ * 
+ * @param result - The FullTextResult to chunk
+ * @param maxChunkChars - Maximum characters per chunk (default: 1000)
+ * @param overlapChars - Overlap between chunks (default: 150)
+ * @returns Array of ArticleChunks
+ */
+export function createChunksFromFullText(
+    result: FullTextResult,
+    maxChunkChars: number = 1000,
+    overlapChars: number = 150
+): ArticleChunk[] {
+    const allChunks: ArticleChunk[] = [];
+
+    if (!result.sections || result.sections.length === 0) {
+        // If no sections, create a single chunk from fullText
+        if (result.fullText) {
+            const textChunks = splitTextIntoChunks(result.fullText, maxChunkChars, overlapChars);
+            textChunks.forEach((text, idx) => {
+                allChunks.push({
+                    id: `${result.pmid}-other-${idx}`,
+                    pmid: result.pmid,
+                    title: result.title,
+                    sectionType: 'other',
+                    sectionHeading: 'Full Text',
+                    chunkIndex: idx,
+                    text,
+                    source: result.source === 'none' ? 'abstract' : result.source,
+                });
+            });
+        }
+        return allChunks;
+    }
+
+    // Process sections in priority order
+    const priorityOrder: FullTextSection['type'][] = [
+        'results', 'discussion', 'conclusion', 'abstract', 'methods', 'introduction', 'other'
+    ];
+
+    for (const sectionType of priorityOrder) {
+        const sectionsOfType = result.sections.filter(s => s.type === sectionType);
+        const config = SECTION_PRIORITY[sectionType];
+
+        for (const section of sectionsOfType) {
+            if (!section.content || section.content.trim().length === 0) continue;
+
+            const textChunks = splitTextIntoChunks(section.content, config.chunkSize, overlapChars);
+            const chunksToUse = textChunks.slice(0, config.maxChunks);
+
+            chunksToUse.forEach((text, idx) => {
+                allChunks.push({
+                    id: `${result.pmid}-${sectionType}-${idx}`,
+                    pmid: result.pmid,
+                    title: result.title,
+                    sectionType,
+                    sectionHeading: section.heading,
+                    chunkIndex: idx,
+                    text,
+                    source: result.source === 'none' ? 'abstract' : result.source,
+                });
+            });
+        }
+    }
+
+    console.log(`[FullTextFetcher] Created ${allChunks.length} chunks for PMID ${result.pmid}`);
+    return allChunks;
+}
+
+/**
+ * Fetch full text for top articles and create granular chunks
+ * Returns a map from PMID to array of ArticleChunks
+ * 
+ * @param articles - Array of articles with pmid, doi, title, abstract
+ * @param topN - Number of top articles to process (default: 5)
+ * @returns Map from pmid to ArticleChunk[]
+ */
+export async function fetchAndChunkFullTextForTopArticles<T extends {
+    pmid?: string;
+    doi?: string | null;
+    pmcid?: string;
+    title: string;
+    abstract?: string | null
+}>(
+    articles: T[],
+    topN: number = 5
+): Promise<Map<string, ArticleChunk[]>> {
+    const chunkMap = new Map<string, ArticleChunk[]>();
+
+    console.log(`[FullTextFetcher] Fetching and chunking full-text for top ${Math.min(topN, articles.length)} articles...`);
+    const startTime = Date.now();
+
+    // First, fetch full text for top articles
+    // Map to compatible type for fetchFullTextForTopArticles (null -> undefined)
+    const compatibleArticles = articles.map(a => ({
+        ...a,
+        doi: a.doi ?? undefined,
+        abstract: a.abstract ?? undefined,
+    }));
+    const fullTextResults = await fetchFullTextForTopArticles(compatibleArticles, topN);
+
+    // Then, create chunks from each full-text result
+    for (const [pmid, result] of fullTextResults) {
+        const chunks = createChunksFromFullText(result);
+        chunkMap.set(pmid, chunks);
+    }
+
+    const elapsed = Date.now() - startTime;
+    const totalChunks = Array.from(chunkMap.values()).reduce((sum, chunks) => sum + chunks.length, 0);
+    console.log(`[FullTextFetcher] Created ${totalChunks} chunks from ${chunkMap.size} articles in ${elapsed}ms`);
+
+    return chunkMap;
+}
+
+/**
+ * Format chunks for LLM prompt with granular evidence
+ * Replaces the monolithic formatFullTextForPrompt approach
+ * 
+ * @param chunks - Array of ArticleChunks (should be pre-ranked)
+ * @param maxChunks - Maximum number of chunks to include (default: 12)
+ * @param maxCharsPerChunk - Max chars per chunk in output (default: 800)
+ * @returns Formatted string for LLM prompt
+ */
+export function formatChunksForPrompt(
+    chunks: ArticleChunk[],
+    maxChunks: number = 12,
+    maxCharsPerChunk: number = 800
+): string {
+    if (chunks.length === 0) return '';
+
+    let formatted = '\n\n📚 **GRANULAR EVIDENCE CHUNKS (High-Relevance Sections)**\n\n';
+    formatted += '> Each chunk below is a highly relevant section from a peer-reviewed article.\n';
+    formatted += '> Use ONLY these chunks for evidence. Cite using the PMID provided.\n\n';
+
+    const chunksToFormat = chunks.slice(0, maxChunks);
+
+    for (const chunk of chunksToFormat) {
+        const truncatedText = chunk.text.length > maxCharsPerChunk
+            ? chunk.text.substring(0, maxCharsPerChunk) + '...'
+            : chunk.text;
+
+        formatted += `---\n`;
+        formatted += `**[PMID: ${chunk.pmid}]** ${chunk.title}\n`;
+        formatted += `📂 Section: ${chunk.sectionHeading} (${chunk.sectionType.toUpperCase()})\n`;
+        if (chunk.score) {
+            formatted += `🎯 Relevance Score: ${(chunk.score * 100).toFixed(1)}%\n`;
+        }
+        formatted += `\n${truncatedText}\n\n`;
+    }
+
+    formatted += '---\n\n';
+    formatted += `> ⚠️ **CITATION RULE**: Only cite PMIDs listed above. Do NOT invent or hallucinate PMIDs.\n`;
+
+    return formatted;
+}
+

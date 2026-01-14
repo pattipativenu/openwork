@@ -22,8 +22,6 @@ const SECTION_MARKERS = {
     "**TL;DR**",
     "## Clinical Context",
     "**Clinical Context**",
-    "## MEDICAL IMAGE ANALYSIS",
-    "**MEDICAL IMAGE ANALYSIS**",
     "## Key Points",
     "**Key Points**",
     "## Summary",
@@ -37,8 +35,6 @@ const SECTION_MARKERS = {
     "**Diagnosis and Logic**",
     "## Differential Diagnosis",
     "**Differential Diagnosis**",
-    "## VISUAL FINDINGS",
-    "**VISUAL FINDINGS**",
     "## Diagnosis",
     "**Diagnosis**",
     "## Clinical Reasoning",
@@ -94,7 +90,6 @@ const SECTION_MARKERS = {
 const SECTION_EXCLUSIONS = {
   clinical: [
     "Differential Diagnosis",
-    "VISUAL FINDINGS",
     "Recommended Approach",
     "Drug & Safety",
     "Treatment",
@@ -118,7 +113,6 @@ const SECTION_EXCLUSIONS = {
     "TL;DR",
     "Clinical Context",
     "Differential Diagnosis",
-    "VISUAL FINDINGS",
     "Evidence Snapshot",
     "Citations",
     "References",
@@ -128,7 +122,6 @@ const SECTION_EXCLUSIONS = {
     "TL;DR",
     "Clinical Context",
     "Differential Diagnosis",
-    "VISUAL FINDINGS",
     "Recommended Approach",
     "Drug & Safety",
     "Treatment",
@@ -328,12 +321,9 @@ const HEADING_TRANSFORMATIONS: Record<string, string> = {
   "tl;dr": "Key Findings",
   "Summary": "Key Findings",
   "Clinical Context & Key Points": "Clinical Context",
-  "MEDICAL IMAGE ANALYSIS": "Image Analysis",
   
   // Diagnosis tab
   "Differential Diagnosis & Reasoning": "Differential Diagnosis",
-  "VISUAL FINDINGS": "Imaging Findings",
-  "VISUAL FINDINGS:": "Imaging Findings",
   
   // Treatment tab
   "Recommended Approach (Evidence-Informed)": "Recommended Approach",
@@ -408,30 +398,13 @@ function cleanSection(content: string): string {
 }
 
 /**
- * Extract visual findings section specifically for image analysis
- */
-export function extractVisualFindings(response: string): string | null {
-  const match = response.match(
-    /\*\*VISUAL FINDINGS:\*\*([\s\S]*?)(?=\n\n\*\*[A-Z]|$)/i
-  );
-  return match ? match[1].trim() : null;
-}
-
-/**
  * Check if response contains image analysis content
  */
 export function hasImageAnalysis(response: string): boolean {
   const imageKeywords = [
-    "VISUAL FINDINGS",
-    "MEDICAL IMAGE ANALYSIS",
-    "X-ray",
-    "CT scan",
-    "MRI",
     "ultrasound",
-    "radiograph",
     "imaging",
-    "Coordinates:",
-    "bounding box",
+    "diagram",
   ];
   
   const lowerResponse = response.toLowerCase();

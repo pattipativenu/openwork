@@ -3,11 +3,8 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Upload, X, FileText, Image as ImageIcon, Send, Loader2 } from "lucide-react";
-import { useGemini } from "@/hooks/useGemini";
+import { useOpenAI } from "@/hooks/useOpenAI";
 import MarkdownTypewriter from "@/components/ui/markdown-typewriter";
-import { AnnotatedImage } from "@/components/ui/annotated-image";
-import { ThermalHeatmapImage } from "@/components/ui/thermal-heatmap-image";
-import { parseVisualFindings, parseVisualFindingsFlexible, cleanVisualFindings } from "@/lib/parse-visual-findings";
 import { parseResponseIntoSections } from "@/lib/response-parser";
 import { EvidenceLogosScroll } from "@/components/ui/evidence-logos-scroll";
 import { ResponseActions } from "@/components/ui/response-actions";
@@ -39,13 +36,10 @@ interface Message {
   timestamp: Date;
   files?: File[];
   imageUrls?: string[]; // base64 image data (uploaded by user)
-  visualFindings?: Array<{
-    finding: string;
-    severity: 'critical' | 'moderate' | 'mild';
-    coordinates: [number, number, number, number];
-    label: string;
-    fileIndex?: number;
-  }>;
+  visualFindings?: any[]; // Keep for compatibility but unused
+  fileIndex?: number;
+  label?: string;
+  coordinates?: any;
   medicalImages?: MedicalImage[]; // fetched educational images
 }
 
@@ -53,20 +47,10 @@ interface Message {
 function ResponseTabs({
   response,
   modelUsed,
-  imageUrls,
-  visualFindings,
   onComplete
 }: {
   response: string;
-  modelUsed: string;
-  imageUrls?: string[];
-  visualFindings?: Array<{
-    finding: string;
-    severity: 'critical' | 'moderate' | 'mild';
-    coordinates: [number, number, number, number];
-    label: string;
-    fileIndex?: number;
-  }>;
+    modelUsed: string;
   onComplete?: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<'clinical' | 'diagnosis' | 'treatment'>('clinical');
@@ -144,35 +128,7 @@ function ResponseTabs({
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }}
             >
-              {/* Show images ONLY in Diagnosis & Logic tab */}
-              {activeTab === 'diagnosis' && imageUrls && imageUrls.length > 0 && (
-                <div className="mb-6">
-                  <div className="mb-3 bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-2.5">
-                    <div className="flex items-center gap-2">
-                      <svg className="w-4 h-4 text-amber-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                      </svg>
-                      <span className="text-amber-700 text-sm font-medium">
-                        AI assistant - Verify with radiologist
-                      </span>
-                    </div>
-                  </div>
-                  <div className={imageUrls.length > 1 ? 'grid grid-cols-2 gap-4 max-w-4xl mx-auto items-start' : 'max-w-2xl mx-auto'}>
-                    {imageUrls.map((imageUrl, imgIndex) => (
-                      <div key={imgIndex} className={imageUrls.length > 1 ? "rounded-lg h-[500px] flex items-center justify-center" : "rounded-lg"}>
-                        <ThermalHeatmapImage
-                          imageUrl={imageUrl}
-                          findings={visualFindings || []}
-                          fileIndex={imgIndex}
-                          showHeatmap={true}
-                          heatmapOpacity={0.55}
-                          compact={imageUrls.length > 1}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+
               
               {/* Use UnifiedCitationRenderer for each tab to get Sources badges */}
               <UnifiedCitationRenderer
@@ -319,7 +275,7 @@ function LearnMoreCapabilities({
   onQuestionClick,
   loading
 }: {
-  onQuestionClick: (question: string, imageUrls?: string[]) => void;
+    onQuestionClick: (question: string) => void;
   loading: boolean;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -338,9 +294,9 @@ function LearnMoreCapabilities({
     return typeof question === 'string' ? question : question.text;
   };
 
-  // Helper to get image URLs
-  const getImageUrls = (question: string | { text: string; imageUrls?: string[] }): string[] | undefined => {
-    return typeof question === 'string' ? undefined : question.imageUrls;
+  // Helper to get image URLs (removed for radiology cleanup)
+  const getImageUrls = (_question: any): undefined => {
+    return undefined;
   };
 
   return (
@@ -396,7 +352,7 @@ function LearnMoreCapabilities({
                       onMouseLeave={() => setHoveredQuestion(null)}
                     >
                       <button
-                        onClick={() => onQuestionClick(questionText, imageUrls)}
+                        onClick={() => onQuestionClick(questionText)}
                         disabled={loading}
                         className="w-full text-left px-4 py-3 bg-gray-50 hover:bg-blue-50 rounded-lg border border-gray-200 hover:border-blue-300 transition-all text-sm text-gray-700 hover:text-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-between group"
                       >
@@ -466,7 +422,7 @@ export default function DoctorMode() {
   const [conversationId, setConversationId] = useState<string>(`conv_${Date.now()}`);
   const historyRef = useRef<HTMLDivElement>(null);
 
-  const { sendMessage, loading, error } = useGemini({ mode: "doctor" });
+  const { sendMessage, loading, error } = useOpenAI({ mode: "doctor" });
 
   // Save conversation to localStorage whenever chatHistory changes
   useEffect(() => {
@@ -711,41 +667,11 @@ export default function DoctorMode() {
     const result = await sendMessage(questionToSubmit, filesToSubmit, chatHistory);
 
     if (result) {
-      // Parse visual findings from response
-      let visualFindings: Array<{
-        finding: string;
-        severity: 'critical' | 'moderate' | 'mild';
-        coordinates: [number, number, number, number];
-        label: string;
-        fileIndex?: number;
-      }> = [];
-      if (imageUrls.length > 0) {
-        const parsed = parseVisualFindings(result.response);
-        const parsedFlexible = parseVisualFindingsFlexible(result.response);
-        const cleanedFindings = cleanVisualFindings([...parsed, ...parsedFlexible]);
-        
-        // Convert to hook format
-        visualFindings = cleanedFindings.map(finding => ({
-          finding: finding.description,
-          severity: finding.severity as 'critical' | 'moderate' | 'mild',
-          coordinates: finding.boundingBoxes[0] ? [
-            finding.boundingBoxes[0].ymin,
-            finding.boundingBoxes[0].xmin,
-            finding.boundingBoxes[0].ymax,
-            finding.boundingBoxes[0].xmax
-          ] as [number, number, number, number] : [0, 0, 0, 0] as [number, number, number, number],
-          label: finding.description,
-          fileIndex: finding.fileIndex
-        }));
-      }
-
       // Add assistant response to history
       const assistantMessage: Message = {
         role: "assistant",
         content: result.response,
         timestamp: new Date(),
-        imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
-        visualFindings: visualFindings.length > 0 ? visualFindings : undefined,
         medicalImages: result.medicalImages, // Include fetched medical images
       };
 
@@ -1109,32 +1035,8 @@ export default function DoctorMode() {
             {/* Learn More Capabilities - Collapsible Section */}
             {!hasSubmittedQuery && (
               <LearnMoreCapabilities
-                onQuestionClick={async (question, imageUrls) => {
-                  // If there are image URLs, fetch and convert them to File objects
-                  if (imageUrls && imageUrls.length > 0) {
-                    try {
-                      const imageFiles: File[] = [];
-                      
-                      // Fetch each image and convert to File object
-                      for (const imageUrl of imageUrls) {
-                        const response = await fetch(imageUrl);
-                        const blob = await response.blob();
-                        const filename = imageUrl.split('/').pop() || 'image.jpg';
-                        const file = new File([blob], filename, { type: blob.type });
-                        imageFiles.push(file);
-                      }
-                      
-                      // Pass files directly to handleSubmit (don't use state)
-                      await handleSubmit(question, imageFiles);
-                    } catch (error) {
-                      console.error('Error loading radiology images:', error);
-                      // Submit without images if loading fails
-                      await handleSubmit(question);
-                    }
-                  } else {
-                    // No images, just submit the question
-                    await handleSubmit(question);
-                  }
+                onQuestionClick={async (question) => {
+                  await handleSubmit(question);
                 }}
                 loading={loading}
               />
@@ -1235,14 +1137,12 @@ export default function DoctorMode() {
 
                         {/* AI Response */}
                         {pair.answer && (
-                          hasAttachmentsInPair ? (
-                            <ResponseTabs
-                              response={pair.answer.content}
-                              modelUsed={modelUsed}
-                              imageUrls={pair.question.imageUrls}
-                              visualFindings={pair.answer.visualFindings}
-                              onComplete={() => isLastPair && setIsResponseComplete(true)}
-                            />
+                            hasAttachmentsInPair ? (
+                              <ResponseTabs
+                                response={pair.answer.content}
+                                modelUsed={modelUsed}
+                                onComplete={() => isLastPair && setIsResponseComplete(true)}
+                              />
                           ) : (
                             <SimpleResponse
                               response={pair.answer.content}

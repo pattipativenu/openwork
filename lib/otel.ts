@@ -33,7 +33,9 @@ export async function initObservability(): Promise<void> {
         // Register with Phoenix using the correct API
         register({
             projectName: PROJECT_NAME,
-            // Phoenix auto-detects endpoint from env or uses default localhost:6006
+            // INCREASE LIMITS to prevent JSON truncation which crashes Phoenix UI
+            spanAttributeValueLengthLimit: 16384, // 16KB limit
+            spanAttributeCountLimit: 256,
         });
 
         // Manually instrument OpenAI client (preferred for Next.js)
@@ -250,11 +252,6 @@ export async function withToolSpan<T>(
 
 /**
  * Create a manual LLM span for OpenAI calls (fixes Cost calculation in Phoenix)
- * @param modelName - The LLM model name (e.g., gpt-4o)
- * @param userPrompt - The user's message (plain text) for display in Phoenix Input column
- * @param sessionId - Session ID for grouping
- * @param fn - The function to execute within the span
- * @param options - Span lifecycle options
  */
 export async function withLLMSpan<T>(
     modelName: string,
@@ -335,12 +332,10 @@ export async function recordFeedback(
     reason: string
 ) {
     try {
-        // We use the Phoenix REST API to submit an annotation/evaluation
-        // This makes it appear in the "Feedback" column
         const payload = {
             span_id: spanId,
-            name: label, // e.g., "Hallucination"
-            score: score, // 0.0 to 1.0 (or 0-100 normalized)
+            name: label,
+            score: score,
             label: score > 0.8 ? "clean" : (score < 0.5 ? "hallucinated" : "uncertain"),
             explanation: reason,
             metadata: {
@@ -348,7 +343,6 @@ export async function recordFeedback(
             }
         };
 
-        // Fire and forget - don't await response to avoid blocking
         fetch(`${COLLECTOR_ENDPOINT}/v1/span_annotations`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -359,6 +353,139 @@ export async function recordFeedback(
     } catch (error) {
         console.error("❌ Error recording feedback:", error);
     }
+}
+
+// --- RAG SPECIFIC HELPERS ---
+
+/**
+ * Standard interface for a retrieved document in Phoenix
+ */
+export interface PhoenixDocument {
+    id: string;
+    content: string; // The main text (abstract/body)
+    score?: number;
+    metadata?: Record<string, any>; // Title, URL, Date, Source
+}
+
+/**
+ * Create a RETRIEVER span for tracking RAG retrieval steps
+ * Ensures ALL retrieved documents are logged for inspection
+ */
+/**
+ * Helper to truncate document content for Phoenix visualization
+ * Prevents "Payload too large" errors and UI crashes
+ */
+function truncateDocumentsForTrace(documents: PhoenixDocument[]): PhoenixDocument[] {
+    return documents.map(doc => {
+        // Create a shallow copy first
+        const newDoc: PhoenixDocument = { ...doc };
+
+        // Truncate main content even more aggressively for Phoenix UI stability
+        if (newDoc.content && newDoc.content.length > 300) {
+            newDoc.content = newDoc.content.substring(0, 300) + '... (truncated)';
+        }
+
+        // Truncate metadata fields if they are large strings
+        if (newDoc.metadata) {
+            const newMetadata = { ...newDoc.metadata };
+            for (const key in newMetadata) {
+                const val = newMetadata[key];
+                if (typeof val === 'string' && val.length > 200) {
+                    newMetadata[key] = val.substring(0, 200) + '... (truncated)';
+                }
+            }
+            newDoc.metadata = newMetadata;
+        }
+
+        return newDoc;
+    });
+}
+
+/**
+ * Create a RETRIEVER span for tracking RAG retrieval steps
+ * Ensures ALL retrieved documents are logged for inspection
+ */
+export async function withRetrieverSpan<T>(
+    stepName: string,
+    fn: (span: Span) => Promise<{ result: T; documents: PhoenixDocument[] }>,
+    attributes?: Record<string, string | number | boolean>
+): Promise<T> {
+    const tracer = getTracer();
+    return tracer.startActiveSpan(stepName, {
+        kind: SpanKind.INTERNAL,
+        attributes: {
+            "openinference.span.kind": "RETRIEVER",
+            ...attributes
+        }
+    }, async (span) => {
+        try {
+            const { result, documents } = await fn(span);
+
+            // Log the document count
+            span.setAttribute("retrieval.documents.count", documents.length);
+
+            // Serialize documents for Phoenix visualization
+            // Phoenix expects the `retrieval.documents` attribute to contain the list of docs
+            if (documents.length > 0) {
+                // TRUNCATE CONTENT prevents JSON truncation and UI crashes
+                const safeDocs = truncateDocumentsForTrace(documents);
+                span.setAttribute("retrieval.documents", JSON.stringify(safeDocs));
+                console.log(`📚 Captured ${documents.length} docs for ${stepName}`);
+            }
+
+            span.setStatus({ code: SpanStatusCode.OK });
+            return result;
+        } catch (error: any) {
+            span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+            throw error;
+        } finally {
+            span.end();
+        }
+    });
+}
+
+/**
+ * Create a RERANKER span
+ * Visualizes the reranking process (Input vs Output)
+ */
+export async function withRerankerSpan<T>(
+    stepName: string,
+    inputDocuments: PhoenixDocument[],
+    fn: (span: Span) => Promise<{ result: T; rerankedDocuments: PhoenixDocument[] }>,
+    attributes?: Record<string, string | number | boolean>
+): Promise<T> {
+    const tracer = getTracer();
+
+    // TRUNCATE INPUTS immediately to safely store in attributes
+    const safeInputDocs = truncateDocumentsForTrace(inputDocuments);
+
+    return tracer.startActiveSpan(stepName, {
+        kind: SpanKind.INTERNAL,
+        attributes: {
+            "openinference.span.kind": "RERANKER",
+            "rerank.input_documents.count": inputDocuments.length,
+            "rerank.input_documents": JSON.stringify(safeInputDocs),
+            ...attributes
+        }
+    }, async (span) => {
+        try {
+            const { result, rerankedDocuments } = await fn(span);
+
+            span.setAttribute("rerank.output_documents.count", rerankedDocuments.length);
+
+            // TRUNCATE OUTPUTS
+            const safeOutputDocs = truncateDocumentsForTrace(rerankedDocuments);
+            span.setAttribute("retrieval.documents", JSON.stringify(safeOutputDocs)); // Standard output for reranker
+
+            span.setStatus({ code: SpanStatusCode.OK });
+            return result;
+        } catch (error: any) {
+            span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+            throw error;
+        } finally {
+            span.end();
+        }
+    });
 }
 
 // Export OpenTelemetry API for direct use

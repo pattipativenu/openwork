@@ -181,6 +181,29 @@ export async function retrieveMedicalImages(
   }
 
   console.log(`🖼️ Retrieving medical images for ${mode} mode...`);
+  console.log(`📝 Full query: "${query}"`);
+  console.log(`🏷️  Disease tags: [${tags.disease_tags.join(', ')}]`);
+  console.log(`🏷️  Decision tags: [${tags.decision_tags.join(', ')}]`);
+
+  // CRITICAL FIX: Skip image retrieval for simple drug information queries
+  // These queries (e.g., "What is Tylenol?") don't benefit from medical images
+  // and often return completely irrelevant results (fetuses, food, etc.)
+  const COMMON_BRAND_NAMES = [
+    'tylenol', 'advil', 'motrin', 'aleve', 'aspirin', 'ibuprofen', 'acetaminophen',
+    'lipitor', 'crestor', 'zocor', 'nexium', 'prilosec', 'prozac', 'zoloft', 'xanax',
+    'eliquis', 'xarelto', 'jardiance', 'farxiga', 'ozempic', 'wegovy', 'mounjaro',
+    'humira', 'metformin', 'lisinopril', 'atorvastatin', 'amlodipine', 'omeprazole',
+  ];
+
+  const isDrugInfoQuery = /^what is\b|^tell me about\b|^information on\b|^side effects of\b|^dosage of\b|^uses of\b/i.test(query);
+  const hasBrandOrGenericName = COMMON_BRAND_NAMES.some(drug => query.toLowerCase().includes(drug));
+
+  if (isDrugInfoQuery && hasBrandOrGenericName) {
+    console.log('💊 Simple drug info query detected - skipping image retrieval');
+    console.log('   Reason: Generic medical image searches return irrelevant results for drug queries.');
+    console.log('   Solution: For drug information, rely on DailyMed and PubMed evidence only.');
+    return [];
+  }
 
   // CRITICAL FIX: For drug dosing/guideline queries, be VERY strict about image relevance
   // Generic anatomy/histology is NOT helpful - only show drug-specific diagrams or nothing
@@ -192,6 +215,13 @@ export async function retrieveMedicalImages(
   
   if (isDrugDosingQuery || isGuidelineQuery) {
     console.log('   🎯 Drug dosing/guideline query detected - will only show drug-specific diagrams or no images');
+  }
+
+  // CRITICAL FIX: For pneumonia antibiotic queries, focus on relevant medical images
+  const isPneumoniaAntibioticQuery = /pneumonia.*antibiotic|antibiotic.*pneumonia|hospital.*acquired.*pneumonia|HAP|MRSA.*Pseudomonas/i.test(query);
+
+  if (isPneumoniaAntibioticQuery) {
+    console.log('   🫁 Pneumonia antibiotic query detected - focusing on respiratory/infectious disease images');
   }
 
   // Expand abbreviations in original query for better matching
@@ -238,23 +268,37 @@ export async function retrieveMedicalImages(
     }
   }
 
-  // Build targeted queries (fallback for simple queries or General Mode)
+  // CRITICAL FIX: Build targeted queries with the FULL user query, not generic terms
   const imageQueries = buildImageQueries(tags, mode);
 
-  // CRITICAL FIX: Add the actual user query FIRST for relevance
-  // This ensures we search for images specific to the user's question
-  const userSpecificQuery = mode === 'doctor'
-    ? `${expandedQuery} medical diagram`
-    : `${expandedQuery} simple illustration`;
+  // MAJOR FIX: Use the actual user query FIRST for relevance, not generic "What is"
+  let userSpecificQuery = '';
+
+  if (isPneumoniaAntibioticQuery) {
+    // For pneumonia antibiotic queries, create specific medical image queries
+    userSpecificQuery = mode === 'doctor'
+      ? `hospital acquired pneumonia chest x-ray MRSA Pseudomonas treatment algorithm`
+      : `pneumonia lung infection chest x-ray simple diagram`;
+  } else {
+    // For other queries, use the full query with medical context
+    userSpecificQuery = mode === 'doctor'
+      ? `${expandedQuery} medical diagram pathophysiology`
+      : `${expandedQuery} simple medical illustration`;
+  }
+
+  // CRITICAL DEBUG: Log the actual query being used
+  console.log(`🎯 User-specific image query: "${userSpecificQuery}"`);
 
   // Prioritize user query, then tag-based queries
   const allQueries = [userSpecificQuery, ...imageQueries].slice(0, 3);
 
-  console.log(`📋 Image queries: ${allQueries.join(', ')}`);
+  console.log(`📋 All image queries: ${allQueries.join(' | ')}`);
 
   // Search for each query with improved error handling
   for (const imageQuery of allQueries) {
     try {
+      console.log(`🔍 Searching images for: "${imageQuery}"`);
+
       const response = await fetch('https://google.serper.dev/images', {
         method: 'POST',
         headers: {
@@ -336,6 +380,9 @@ export async function retrieveMedicalImages(
 
   // INTELLIGENT IMAGE RETRIEVAL: Use new orchestrator for better source routing
   const { retrieveMedicalImagesIntelligent, formatMedicalImagesForResponse } = await import('@/lib/medical-image-orchestrator');
+
+  // CRITICAL FIX: Pass the FULL query to the orchestrator, not a truncated version
+  console.log(`🎯 Calling intelligent retrieval with full query: "${query}"`);
   const intelligentImages = await retrieveMedicalImagesIntelligent(query, mode, tags);
   
   const openCandidates: MedicalImageCandidate[] = intelligentImages.map(img => ({
@@ -388,6 +435,7 @@ export async function retrieveMedicalImages(
     console.log(`   Open source candidates: ${openCandidates.length}`);
     console.log(`   Web search candidates: ${allCandidates.length}`);
     console.log(`   Unique candidates after dedup: ${uniqueCandidates.length}`);
+    console.log(`   User-specific query used: "${userSpecificQuery}"`);
     
     return [];
   }
@@ -458,7 +506,46 @@ export async function retrieveMedicalImages(
     }
   }
 
+  // CRITICAL FIX: For pneumonia antibiotic queries, apply specific filtering
+  if (isPneumoniaAntibioticQuery) {
+    console.log('   🫁 Applying pneumonia-specific image filter...');
+
+    const pneumoniaRelevantImages = topCandidates.filter(img => {
+      const text = `${img.title} ${img.snippet}`.toLowerCase();
+
+      // Must be related to pneumonia, respiratory, or infectious disease
+      const isPneumoniaRelevant = text.includes('pneumonia') || text.includes('lung') ||
+        text.includes('respiratory') || text.includes('chest') ||
+        text.includes('mrsa') || text.includes('pseudomonas') ||
+        text.includes('antibiotic') || text.includes('infection') ||
+        text.includes('hospital acquired') || text.includes('ventilator') ||
+        text.includes('x-ray') || text.includes('ct scan');
+
+      // Must NOT be marine biology or completely unrelated
+      const isIrrelevant = text.includes('xenoturbella') || text.includes('marine') ||
+        text.includes('worm') || text.includes('mollusk') ||
+        text.includes('pearl') || text.includes('ocean') ||
+        text.includes('sea') || text.includes('aquatic');
+
+      return isPneumoniaRelevant && !isIrrelevant;
+    });
+
+    if (pneumoniaRelevantImages.length > 0) {
+      console.log(`   ✅ Filtered to ${pneumoniaRelevantImages.length} pneumonia-relevant images (removed ${topCandidates.length - pneumoniaRelevantImages.length} irrelevant)`);
+      topCandidates = pneumoniaRelevantImages;
+    } else {
+      console.log('   ⚠️ No pneumonia-relevant images found - returning empty array to avoid marine biology');
+      return [];
+    }
+  }
+
   console.log(`✅ Found ${topCandidates.length} relevant medical images (${openCandidates.length} open sources, ${allCandidates.length} web results)`);
+
+  // Log final image titles for debugging
+  console.log(`📋 Final image titles:`);
+  topCandidates.forEach((img, i) => {
+    console.log(`   ${i + 1}. "${img.title.substring(0, 80)}..."`);
+  });
 
   return topCandidates;
 }

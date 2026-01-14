@@ -179,7 +179,7 @@ html {
   .formatted-question {
     font-family: var(--font-lora), Georgia, serif;
     text-align: left;
-    max-width: 800px;
+    max-width: 1024px; /* Match max-w-5xl for consistent alignment with answers */
     margin: 0 auto 32px auto;
     padding: 0;
   }

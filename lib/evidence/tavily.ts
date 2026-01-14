@@ -21,29 +21,49 @@ const TAVILY_API_URL = "https://api.tavily.com/search";
 
 /**
  * Trusted medical domains that Tavily is allowed to search
- * Limited to top 30 most authoritative sources
+ * ENHANCED: Added major medical organizations and specialty societies
  */
 export const TRUSTED_MEDICAL_DOMAINS = [
   // Government Health Agencies
   "cdc.gov", "who.int", "nih.gov", "fda.gov", "cms.gov",
 
-  // Medical Organizations
+  // Major Medical Organizations & Specialty Societies
+  "acc.org", // American College of Cardiology
+  "heart.org", // American Heart Association
+  "diabetes.org", // American Diabetes Association
+  "cancer.org", // American Cancer Society
+  "kidney.org", // National Kidney Foundation
+  "lung.org", // American Lung Association
+  "stroke.org", // American Stroke Association
+  "arthritis.org", // Arthritis Foundation
+  "acp-online.org", // American College of Physicians
+  "acog.org", // American College of Obstetricians and Gynecologists
+  "aafp.org", // American Academy of Family Physicians
+  "asco.org", // American Society of Clinical Oncology
+  "asn-online.org", // American Society of Nephrology
+  "chestnet.org", // American College of Chest Physicians
+  "gastro.org", // American Gastroenterological Association
+
+  // Premier Medical Institutions
   "mayoclinic.org", "clevelandclinic.org", "hopkinsmedicine.org",
+  "massgeneral.org", "brighamandwomens.org", "mskcc.org",
+
+  // Trusted Medical Information Sites
   "webmd.com", "healthline.com", "medlineplus.gov",
 
-  // Academic & Research
+  // Academic & Research Journals
   "pubmed.ncbi.nlm.nih.gov", "ncbi.nlm.nih.gov", "cochranelibrary.com",
   "bmj.com", "nejm.org", "thelancet.com", "jamanetwork.com",
+  "nature.com", "sciencedirect.com", "springer.com",
 
-  // Professional Organizations
-  "heart.org", "diabetes.org", "cancer.org", "kidney.org",
-  "lung.org", "stroke.org", "arthritis.org",
-
-  // International Health
+  // International Health Organizations
   "nhs.uk", "nice.org.uk", "health.gov.au", "canada.ca",
+  "escardio.org", // European Society of Cardiology
+  "easd.org", // European Association for the Study of Diabetes
 
-  // Medical Education
-  "uptodate.com", "medscape.com", "emedicine.medscape.com"
+  // Medical Education & Clinical Decision Support
+  "uptodate.com", "medscape.com", "emedicine.medscape.com",
+  "dynamed.com", "clinicalkey.com"
 ];
 
 export interface TavilyCitation {
@@ -147,15 +167,16 @@ export async function searchTavilyMedical(
       const startTime = Date.now();
 
       console.log("🔍 Tavily: Searching trusted medical sources...");
-      console.log(`   Query: "${query.substring(0, 100)}..."`);
+      console.log(`   Query: "${query}"`); // Show full query, not truncated
 
       // Set input attributes for the span
       span.setAttribute('input.query', query.substring(0, 500));
       span.setAttribute('input.max_results', maxResults);
 
       try {
-        // Truncate query to prevent Tavily 400-char limit error
-        const truncatedQuery = query.length > 350 ? query.substring(0, 347) + '...' : query;
+        // FIXED: Use full query instead of truncating - Tavily can handle longer queries
+        // Only truncate if absolutely necessary (>500 chars) to avoid losing important context
+        const searchQuery = query.length > 500 ? query.substring(0, 497) + '...' : query;
 
         const response = await fetch(TAVILY_API_URL, {
           method: "POST",
@@ -164,16 +185,17 @@ export async function searchTavilyMedical(
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            query: truncatedQuery, // Use truncated query directly, skip verbose prompt
-            search_depth: "advanced",
-            include_answer: true,
-            include_raw_content: false,
+            query: searchQuery, // Use full query to preserve medical context
+            search_depth: "advanced", // Advanced search for better results
+            include_answer: true, // Get Tavily's synthesized answer
+            include_raw_content: true, // FIXED: Get full content from URLs
             max_results: maxResults,
             include_domains: includeDomains,
             exclude_domains: [
               // Exclude non-medical or unreliable sources
               "wikipedia.org", "reddit.com", "quora.com",
-              "facebook.com", "twitter.com", "youtube.com"
+              "facebook.com", "twitter.com", "youtube.com",
+              "pinterest.com", "instagram.com", "tiktok.com"
             ]
           }),
         });
@@ -193,14 +215,24 @@ export async function searchTavilyMedical(
 
         console.log(`✅ Tavily: Found ${rawResults.length} results`);
 
-        // Process and validate citations
+        // Process and validate citations with FULL CONTENT
         const citations: TavilyCitation[] = rawResults
           .slice(0, maxResults)
-          .map((result: { url: string; title?: string; content?: string; score?: number; published_date?: string }) => {
+          .map((result: { 
+            url: string; 
+            title?: string; 
+            content?: string; 
+            raw_content?: string;
+            score?: number; 
+            published_date?: string 
+          }) => {
+            // FIXED: Use full raw_content when available, fallback to content snippet
+            const fullContent = result.raw_content || result.content || '';
+            
             return {
               url: result.url,
               title: result.title,
-              content: result.content?.substring(0, 500), // Limit content length
+              content: fullContent, // Use FULL content, not truncated
               score: result.score,
               published_date: result.published_date,
             };
@@ -304,7 +336,7 @@ export function formatTavilyForPrompt(result: TavilySearchResult): string {
  * Extract source information from a URL
  * Returns the actual source name (Mayo Clinic, CDC, etc.) - NOT "Tavily"
  */
-function extractSourceInfo(url: string): { sourceName: string; title: string } {
+export function extractSourceInfo(url: string): { sourceName: string; title: string } {
   const hostname = new URL(url).hostname.toLowerCase();
 
   // Map domains to proper source names

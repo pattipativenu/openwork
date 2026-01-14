@@ -1,293 +1,392 @@
 /**
- * Semantic Reranker
+ * Semantic Reranking Layer - MedCPT-based relevance scoring
  * 
- * Reranks search results using semantic similarity to improve relevance.
- * Uses biomedical embeddings to calculate cosine similarity between query and articles.
- * Integrates with Phase 1 caching for optimal performance.
+ * ARCHITECTURE: Works AFTER API retrieval, BEFORE BGE Cross-Encoder
+ * Pipeline: Structured Query → API Results → Semantic Rerank → BGE Rerank
  * 
- * Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 7.1, 7.2, 7.3, 7.4, 7.5
+ * CRITICAL FIX: Uses UNION scoring, not intersection
+ * Combines API relevance (40%) + semantic similarity (60%) for final score
  */
 
-import { getEmbeddingGenerator, cosineSimilarity } from './embedding-generator';
-import { getCachedEvidence, cacheEvidence } from './cache-manager';
+import { getMedCPTEmbedder, MedCPTEmbedder } from './medcpt-embedder';
 import type { PubMedArticle } from './pubmed';
-import type { CochraneReview } from './cochrane';
 import type { EuropePMCArticle } from './europepmc';
-import type { Chunk } from './sentence-splitter';
+import type { CochraneReview } from './cochrane';
+import type { PMCArticle } from './pmc';
 
-export interface RankedArticle<T = PubMedArticle> {
+interface SemanticScore<T> {
   article: T;
-  similarity: number;
-  originalRank: number;
+  semanticSimilarity: number;
+  combinedScore: number;
+  rank: number;
 }
 
-export interface RerankerOptions {
-  topK?: number; // Number of articles to rerank (default: 50)
-  minSimilarity?: number; // Minimum similarity threshold (default: 0.0)
-  skipIfFewResults?: number; // Skip reranking if fewer than N results (default: 10)
-  useCache?: boolean; // Enable caching (default: true)
-  cacheSource?: string; // Cache source identifier (default: 'semantic')
+interface SemanticRerankingConfig {
+  minSimilarityThreshold: number; // Default: 0.45 for PubMedBERT (45% similarity)
+  topK?: number; // Optional: limit results
+  combineWithKeywordScore?: boolean; // Combine with API relevance score
+  keywordWeight?: number; // Default: 0.4 (40% keyword, 60% semantic)
 }
 
-/**
- * Semantic Reranker for evidence articles
- */
 export class SemanticReranker {
-  private embeddingGenerator = getEmbeddingGenerator();
+  private embedder: MedCPTEmbedder;
 
-  /**
-   * Rerank articles using semantic similarity
-   * 
-   * @param query - The search query
-   * @param articles - Articles to rerank
-   * @param options - Reranking options
-   * @returns Reranked articles with similarity scores
-   */
-  async rerankArticles<T extends { title: string; abstract?: string; pmid?: string }>(
-    query: string,
-    articles: T[],
-    options: RerankerOptions = {}
-  ): Promise<RankedArticle<T>[]> {
-    const {
-      topK = 50,
-      minSimilarity = 0.0,
-      skipIfFewResults = 10,
-      useCache = true,
-      cacheSource = 'semantic',
-    } = options;
-
-    // Check cache first (if enabled)
-    if (useCache) {
-      try {
-        const cacheKey = `${query}:${articles.length}:${topK}`;
-        const cached = await getCachedEvidence<RankedArticle<T>[]>(cacheKey, cacheSource);
-        
-        if (cached) {
-          console.log(`[SemanticReranker] Using cached reranked results`);
-          return cached.data;
-        }
-      } catch (error: any) {
-        console.error('[SemanticReranker] Cache read error, continuing without cache:', error.message);
-        // Continue with reranking
-      }
-    }
-
-    // Skip reranking if too few results
-    if (articles.length < skipIfFewResults) {
-      console.log(`[SemanticReranker] Skipping reranking: only ${articles.length} articles (< ${skipIfFewResults})`);
-      return articles.map((article, index) => ({
-        article,
-        similarity: 1.0, // Default similarity
-        originalRank: index,
-      }));
-    }
-
-    try {
-      // Limit to topK articles for efficiency
-      const articlesToRerank = articles.slice(0, topK);
-      
-      console.log(`[SemanticReranker] Reranking ${articlesToRerank.length} articles for query: "${query}"`);
-      const startTime = Date.now();
-
-      // Generate query embedding
-      const queryEmbedding = await this.embeddingGenerator.generateEmbedding(query);
-
-      // Generate article embeddings
-      const articleTexts = articlesToRerank.map(article => 
-        this.getArticleText(article)
-      );
-      const articleEmbeddings = await this.embeddingGenerator.generateEmbeddings(articleTexts);
-
-      // Calculate similarities
-      const rankedArticles: RankedArticle<T>[] = articlesToRerank.map((article, index) => {
-        const similarity = cosineSimilarity(queryEmbedding, articleEmbeddings[index]);
-        return {
-          article,
-          similarity,
-          originalRank: index,
-        };
-      });
-
-      // Sort by similarity (descending)
-      rankedArticles.sort((a, b) => b.similarity - a.similarity);
-
-      // Filter by minimum similarity
-      const filteredArticles = rankedArticles.filter(
-        item => item.similarity >= minSimilarity
-      );
-
-      const elapsedTime = Date.now() - startTime;
-      const avgSimilarity = filteredArticles.length > 0
-        ? filteredArticles.reduce((sum, item) => sum + item.similarity, 0) / filteredArticles.length
-        : 0;
-
-      console.log(
-        `[SemanticReranker] Reranked ${filteredArticles.length} articles in ${elapsedTime}ms ` +
-        `(avg similarity: ${avgSimilarity.toFixed(3)})`
-      );
-
-      // Cache the results (if enabled)
-      if (useCache) {
-        try {
-          const cacheKey = `${query}:${articles.length}:${topK}`;
-          await cacheEvidence(cacheKey, cacheSource, filteredArticles);
-        } catch (error: any) {
-          console.error('[SemanticReranker] Cache write error:', error.message);
-          // Continue - results are still returned
-        }
-      }
-
-      return filteredArticles;
-    } catch (error) {
-      console.error('[SemanticReranker] Reranking failed, returning original order:', error);
-      
-      // Graceful degradation: return original order
-      return articles.map((article, index) => ({
-        article,
-        similarity: 1.0,
-        originalRank: index,
-      }));
-    }
+  constructor() {
+    this.embedder = getMedCPTEmbedder();
   }
 
   /**
-   * Get text representation of an article for embedding
-   * Combines title and abstract (if available)
-   */
-  private getArticleText(article: { title: string; abstract?: string }): string {
-    if (article.abstract) {
-      return `${article.title} ${article.abstract}`;
-    }
-    return article.title;
-  }
-
-  /**
-   * Rerank PubMed articles specifically
-   * Convenience method with PubMed-specific defaults
+   * Rerank PubMed articles using MedCPT semantic similarity
+   * CRITICAL: Uses weighted combination, not intersection
    */
   async rerankPubMedArticles(
-    query: string,
+    clinicalQuery: string,
     articles: PubMedArticle[],
-    options: RerankerOptions = {}
-  ): Promise<RankedArticle<PubMedArticle>[]> {
-    return this.rerankArticles(query, articles, options);
+    config: SemanticRerankingConfig = {
+      minSimilarityThreshold: 0.45, // Lowered for PubMedBERT
+      combineWithKeywordScore: true,
+      keywordWeight: 0.3 // 70% semantic, 30% keyword
+    }
+  ): Promise<PubMedArticle[]> {
+    if (articles.length === 0) return [];
+
+    console.log(`🔍 Semantic reranking ${articles.length} PubMed articles...`);
+
+    // Step 1: Generate query embedding (once)
+    const queryEmbedding = await this.embedder.embedQuery(clinicalQuery);
+
+    // Step 2: Generate article embeddings (batch)
+    const articleEmbeddings = await this.embedder.embedArticlesBatch(
+      articles.map(a => ({ title: a.title, abstract: a.abstract }))
+    );
+
+    // Step 3: Compute semantic similarities
+    const scoredArticles = articles.map((article, i) => {
+      const semanticSimilarity = MedCPTEmbedder.cosineSimilarity(
+        queryEmbedding,
+        articleEmbeddings[i]
+      );
+
+      // CRITICAL FIX: Combine with keyword score if API provides relevance
+      let finalScore = semanticSimilarity;
+
+      // Note: relevanceScore is optional and only present when article comes from certain sources
+      const articleWithScore = article as PubMedArticle & { relevanceScore?: number };
+      if (config.combineWithKeywordScore && articleWithScore.relevanceScore) {
+        const semanticWeight = 1 - (config.keywordWeight || 0.4);
+        finalScore = (semanticWeight * semanticSimilarity) +
+          (config.keywordWeight! * articleWithScore.relevanceScore);
+      }
+
+      return {
+        article,
+        semanticSimilarity,
+        combinedScore: finalScore,
+        rank: 0 // Will be set after sorting
+      };
+    });
+
+    // Step 4: Sort by combined score and filter
+    scoredArticles.sort((a, b) => b.combinedScore - a.combinedScore);
+
+    const filtered = scoredArticles.filter(
+      s => s.semanticSimilarity >= config.minSimilarityThreshold
+    );
+
+    // Step 5: Apply topK limit if specified
+    const limited = config.topK ? filtered.slice(0, config.topK) : filtered;
+
+    // Add rank numbers
+    limited.forEach((item, i) => {
+      item.rank = i + 1;
+    });
+
+    console.log(`✅ Semantic filter: ${articles.length} → ${limited.length} articles`);
+    console.log(`📊 Top 3 similarities: ${limited.slice(0, 3).map(s => s.semanticSimilarity.toFixed(3)).join(', ')}`);
+
+    // Return articles with updated metadata
+    return limited.map(s => ({
+      ...s.article,
+      semanticScore: s.semanticSimilarity,
+      combinedScore: s.combinedScore
+    }));
   }
 
   /**
-   * Rerank Cochrane reviews specifically
-   * Convenience method with Cochrane-specific defaults
-   */
-  async rerankCochraneReviews(
-    query: string,
-    reviews: CochraneReview[],
-    options: RerankerOptions = {}
-  ): Promise<RankedArticle<CochraneReview>[]> {
-    return this.rerankArticles(query, reviews, options);
-  }
-
-  /**
-   * Rerank Europe PMC articles specifically
-   * Convenience method with Europe PMC-specific defaults
+   * Rerank Europe PMC articles
    */
   async rerankEuropePMCArticles(
-    query: string,
+    clinicalQuery: string,
     articles: EuropePMCArticle[],
-    options: RerankerOptions = {}
-  ): Promise<RankedArticle<EuropePMCArticle>[]> {
-    // Europe PMC has different field names, so we need to adapt
-    const adaptedArticles = articles.map(article => ({
-      ...article,
-      title: article.title,
-      abstract: article.abstractText,
+    config: SemanticRerankingConfig = { minSimilarityThreshold: 0.45 }
+  ): Promise<EuropePMCArticle[]> {
+    if (articles.length === 0) return [];
+
+    console.log(`🔍 Semantic reranking ${articles.length} Europe PMC articles...`);
+
+    const queryEmbedding = await this.embedder.embedQuery(clinicalQuery);
+
+    const articleEmbeddings = await this.embedder.embedArticlesBatch(
+      articles.map(a => ({
+        title: a.title,
+        abstract: a.abstractText || ''
+      }))
+    );
+
+    const scoredArticles = articles.map((article, i) => ({
+      article,
+      semanticSimilarity: MedCPTEmbedder.cosineSimilarity(
+        queryEmbedding,
+        articleEmbeddings[i]
+      )
     }));
-    
-    return this.rerankArticles(query, adaptedArticles as any, options) as Promise<RankedArticle<EuropePMCArticle>[]>;
+
+    scoredArticles.sort((a, b) => b.semanticSimilarity - a.semanticSimilarity);
+
+    const filtered = scoredArticles.filter(
+      s => s.semanticSimilarity >= config.minSimilarityThreshold
+    );
+
+    const limited = config.topK ? filtered.slice(0, config.topK) : filtered;
+
+    console.log(`✅ Europe PMC semantic filter: ${articles.length} → ${limited.length} articles`);
+
+    return limited.map(s => ({
+      ...s.article,
+      semanticScore: s.semanticSimilarity
+    }));
   }
 
   /**
-   * Rerank chunks (sentence-level search)
-   * Enables precise chunk-level attribution
+   * Rerank Cochrane reviews
    */
-  async rerankChunks(
-    query: string,
-    chunks: Chunk[],
-    options: RerankerOptions = {}
-  ): Promise<RankedArticle<Chunk>[]> {
-    // Adapt chunks to have title and abstract fields
-    const adaptedChunks = chunks.map(chunk => ({
-      ...chunk,
-      title: chunk.metadata.title,
-      abstract: chunk.text, // Use chunk text as "abstract"
+  async rerankCochraneReviews(
+    clinicalQuery: string,
+    reviews: CochraneReview[],
+    config: SemanticRerankingConfig = { minSimilarityThreshold: 0.45 }
+  ): Promise<CochraneReview[]> {
+    if (reviews.length === 0) return [];
+
+    console.log(`🔍 Semantic reranking ${reviews.length} Cochrane reviews...`);
+
+    const queryEmbedding = await this.embedder.embedQuery(clinicalQuery);
+
+    const reviewEmbeddings = await this.embedder.embedArticlesBatch(
+      reviews.map(r => ({
+        title: r.title,
+        abstract: r.abstract || ''  // CochraneReview has abstract field
+      }))
+    );
+
+    const scoredReviews = reviews.map((review, i) => ({
+      review,
+      semanticSimilarity: MedCPTEmbedder.cosineSimilarity(
+        queryEmbedding,
+        reviewEmbeddings[i]
+      )
     }));
-    
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return this.rerankArticles(query, adaptedChunks as any, options).then(results => results as unknown as RankedArticle<Chunk>[]);
+
+    scoredReviews.sort((a, b) => b.semanticSimilarity - a.semanticSimilarity);
+
+    const filtered = scoredReviews.filter(
+      s => s.semanticSimilarity >= config.minSimilarityThreshold
+    );
+
+    const limited = config.topK ? filtered.slice(0, config.topK) : filtered;
+
+    console.log(`✅ Cochrane semantic filter: ${reviews.length} → ${limited.length} reviews`);
+
+    return limited.map(s => ({
+      ...s.review,
+      semanticScore: s.semanticSimilarity
+    }));
+  }
+
+  /**
+   * Rerank PMC articles
+   */
+  async rerankPMCArticles(
+    clinicalQuery: string,
+    articles: PMCArticle[],
+    config: SemanticRerankingConfig = { minSimilarityThreshold: 0.45 }
+  ): Promise<PMCArticle[]> {
+    if (articles.length === 0) return [];
+
+    console.log(`🔍 Semantic reranking ${articles.length} PMC articles...`);
+
+    const queryEmbedding = await this.embedder.embedQuery(clinicalQuery);
+
+    const articleEmbeddings = await this.embedder.embedArticlesBatch(
+      articles.map(a => ({
+        title: a.title,
+        abstract: ''  // PMCArticle has no abstract field
+      }))
+    );
+
+    const scoredArticles = articles.map((article, i) => ({
+      article,
+      semanticSimilarity: MedCPTEmbedder.cosineSimilarity(
+        queryEmbedding,
+        articleEmbeddings[i]
+      )
+    }));
+
+    scoredArticles.sort((a, b) => b.semanticSimilarity - a.semanticSimilarity);
+
+    const filtered = scoredArticles.filter(
+      s => s.semanticSimilarity >= config.minSimilarityThreshold
+    );
+
+    const limited = config.topK ? filtered.slice(0, config.topK) : filtered;
+
+    console.log(`✅ PMC semantic filter: ${articles.length} → ${limited.length} articles`);
+
+    return limited.map(s => ({
+      ...s.article,
+      semanticScore: s.semanticSimilarity
+    }));
+  }
+
+  /**
+   * Generic semantic reranking for any article type
+   * Useful for new evidence sources
+   */
+  async rerankGenericArticles<T extends { title: string; abstract?: string }>(
+    clinicalQuery: string,
+    articles: T[],
+    config: SemanticRerankingConfig = { minSimilarityThreshold: 0.45 }
+  ): Promise<T[]> {
+    if (articles.length === 0) return [];
+
+    console.log(`🔍 Semantic reranking ${articles.length} generic articles...`);
+
+    const queryEmbedding = await this.embedder.embedQuery(clinicalQuery);
+
+    const articleEmbeddings = await this.embedder.embedArticlesBatch(
+      articles.map(a => ({
+        title: a.title,
+        abstract: a.abstract || ''
+      }))
+    );
+
+    const scoredArticles = articles.map((article, i) => ({
+      article,
+      semanticSimilarity: MedCPTEmbedder.cosineSimilarity(
+        queryEmbedding,
+        articleEmbeddings[i]
+      )
+    }));
+
+    scoredArticles.sort((a, b) => b.semanticSimilarity - a.semanticSimilarity);
+
+    const filtered = scoredArticles.filter(
+      s => s.semanticSimilarity >= config.minSimilarityThreshold
+    );
+
+    const limited = config.topK ? filtered.slice(0, config.topK) : filtered;
+
+    console.log(`✅ Generic semantic filter: ${articles.length} → ${limited.length} articles`);
+
+    return limited.map(s => ({
+      ...s.article,
+      semanticScore: s.semanticSimilarity
+    }));
+  }
+
+  /**
+   * Batch rerank multiple evidence sources efficiently
+   * Processes all sources with single query embedding
+   */
+  async rerankAllEvidenceSources(
+    clinicalQuery: string,
+    evidence: {
+      pubmedArticles: PubMedArticle[];
+      europePMCArticles: EuropePMCArticle[];
+      cochraneReviews: CochraneReview[];
+      pmcArticles: PMCArticle[];
+    },
+    config: SemanticRerankingConfig = { minSimilarityThreshold: 0.45 }
+  ): Promise<{
+    pubmedArticles: PubMedArticle[];
+    europePMCArticles: EuropePMCArticle[];
+    cochraneReviews: CochraneReview[];
+    pmcArticles: PMCArticle[];
+  }> {
+    console.log(`🔄 Batch semantic reranking all evidence sources...`);
+
+    // Process all sources in parallel for efficiency
+    const [pubmedArticles, europePMCArticles, cochraneReviews, pmcArticles] = await Promise.all([
+      this.rerankPubMedArticles(clinicalQuery, evidence.pubmedArticles, config),
+      this.rerankEuropePMCArticles(clinicalQuery, evidence.europePMCArticles, config),
+      this.rerankCochraneReviews(clinicalQuery, evidence.cochraneReviews, config),
+      this.rerankPMCArticles(clinicalQuery, evidence.pmcArticles, config)
+    ]);
+
+    const totalBefore = evidence.pubmedArticles.length + evidence.europePMCArticles.length +
+      evidence.cochraneReviews.length + evidence.pmcArticles.length;
+    const totalAfter = pubmedArticles.length + europePMCArticles.length +
+      cochraneReviews.length + pmcArticles.length;
+
+    console.log(`✅ Batch semantic reranking complete: ${totalBefore} → ${totalAfter} articles`);
+
+    return {
+      pubmedArticles,
+      europePMCArticles,
+      cochraneReviews,
+      pmcArticles
+    };
+  }
+
+  /**
+   * Get semantic similarity statistics for debugging
+   */
+  async getSemanticStats(
+    clinicalQuery: string,
+    articles: Array<{ title: string; abstract?: string }>
+  ): Promise<{
+    mean: number;
+    median: number;
+    min: number;
+    max: number;
+    aboveThreshold: number;
+    totalArticles: number;
+  }> {
+    if (articles.length === 0) {
+      return { mean: 0, median: 0, min: 0, max: 0, aboveThreshold: 0, totalArticles: 0 };
+    }
+
+    const queryEmbedding = await this.embedder.embedQuery(clinicalQuery);
+    const articleEmbeddings = await this.embedder.embedArticlesBatch(articles);
+
+    const similarities = articleEmbeddings.map(embedding =>
+      MedCPTEmbedder.cosineSimilarity(queryEmbedding, embedding)
+    );
+
+    similarities.sort((a, b) => a - b);
+
+    const mean = similarities.reduce((sum, sim) => sum + sim, 0) / similarities.length;
+    const median = similarities[Math.floor(similarities.length / 2)];
+    const min = similarities[0];
+    const max = similarities[similarities.length - 1];
+    const aboveThreshold = similarities.filter(sim => sim >= 0.45).length;
+
+    return {
+      mean: Math.round(mean * 1000) / 1000,
+      median: Math.round(median * 1000) / 1000,
+      min: Math.round(min * 1000) / 1000,
+      max: Math.round(max * 1000) / 1000,
+      aboveThreshold,
+      totalArticles: articles.length
+    };
   }
 }
 
-/**
- * Singleton instance for reuse
- */
-let rerankerInstance: SemanticReranker | null = null;
+// Export singleton instance
+let semanticRerankerInstance: SemanticReranker | null = null;
 
-/**
- * Get the singleton semantic reranker instance
- */
 export function getSemanticReranker(): SemanticReranker {
-  if (!rerankerInstance) {
-    rerankerInstance = new SemanticReranker();
+  if (!semanticRerankerInstance) {
+    semanticRerankerInstance = new SemanticReranker();
   }
-  return rerankerInstance;
-}
-
-/**
- * Convenience function to rerank PubMed articles
- */
-export async function rerankPubMedArticles(
-  query: string,
-  articles: PubMedArticle[],
-  options: RerankerOptions = {}
-): Promise<PubMedArticle[]> {
-  const reranker = getSemanticReranker();
-  const rankedArticles = await reranker.rerankPubMedArticles(query, articles, options);
-  return rankedArticles.map(item => item.article);
-}
-
-/**
- * Convenience function to rerank Cochrane reviews
- */
-export async function rerankCochraneReviews(
-  query: string,
-  reviews: CochraneReview[],
-  options: RerankerOptions = {}
-): Promise<CochraneReview[]> {
-  const reranker = getSemanticReranker();
-  const rankedReviews = await reranker.rerankCochraneReviews(query, reviews, options);
-  return rankedReviews.map(item => item.article);
-}
-
-/**
- * Convenience function to rerank Europe PMC articles
- */
-export async function rerankEuropePMCArticles(
-  query: string,
-  articles: EuropePMCArticle[],
-  options: RerankerOptions = {}
-): Promise<EuropePMCArticle[]> {
-  const reranker = getSemanticReranker();
-  const rankedArticles = await reranker.rerankEuropePMCArticles(query, articles, options);
-  return rankedArticles.map(item => item.article);
-}
-
-/**
- * Convenience function to rerank chunks (sentence-level)
- */
-export async function rerankChunks(
-  query: string,
-  chunks: Chunk[],
-  options: RerankerOptions = {}
-): Promise<Chunk[]> {
-  const reranker = getSemanticReranker();
-  const rankedChunks = await reranker.rerankChunks(query, chunks, options);
-  return rankedChunks.map(item => item.article);
+  return semanticRerankerInstance;
 }

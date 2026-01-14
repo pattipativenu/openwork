@@ -269,19 +269,8 @@ export const CITATION_FORMAT_XML = `
 /**
  * Generate Doctor Mode prompt with XML structure
  */
-export function getDoctorModePromptSimplified(hasFiles: boolean, hasImages: boolean): string {
-  const modeType = hasFiles && hasImages ? 'image_analysis' : 'qa';
-
-  const wordLimitSection = modeType === 'image_analysis'
-    ? `
-<word_limit mode="image_analysis">
-  NO WORD LIMIT - Provide comprehensive, detailed analysis
-  Include thorough image interpretation with specific findings
-  Describe anatomical landmarks, pathological findings, and clinical correlations
-  Cite extensively (8-12+ sources) to support imaging findings
-</word_limit>
-`
-    : `
+export function getDoctorModePromptSimplified(hasFiles: boolean): string {
+  const wordLimitSection = `
 <word_limit mode="qa">
   STRICT 400 WORD LIMIT - Your ENTIRE response must be under 400 words (excluding references)
   Focus on ACCURACY over volume
@@ -305,7 +294,6 @@ export function getDoctorModePromptSimplified(hasFiles: boolean, hasImages: bool
   <task>
     Answer clinical questions by synthesizing evidence into a continuous, well-cited narrative.
     Report guideline consensus, trial data, and clinical context - let the evidence speak.
-    ${modeType === 'image_analysis' ? 'Analyze the uploaded medical images with expert-level precision.' : ''}
   </task>
   
   ${wordLimitSection}
@@ -351,61 +339,5 @@ export function getDoctorModePromptSimplified(hasFiles: boolean, hasImages: bool
 </system_prompt>
 `;
 
-
-  // Add image analysis specific instructions if needed
-  if (hasFiles && hasImages) {
-    return basePrompt + getImageAnalysisInstructions();
-  }
-
   return basePrompt;
-}
-
-// ============================================================================
-// IMAGE ANALYSIS INSTRUCTIONS (XML)
-// ============================================================================
-
-function getImageAnalysisInstructions(): string {
-  return `
-<image_analysis_instructions>
-  <tab_structure>
-    <tab name="clinical_analysis" order="1">
-      <section name="key_findings">3-6 executive summary bullets</section>
-      <section name="clinical_context">2-4 sentences on presentation and risk factors</section>
-      <section name="image_findings">4-8 systematic bullets with radiographic terminology</section>
-    </tab>
-    
-    <tab name="diagnosis_and_logic" order="2">
-      <section name="working_diagnosis">1-3 ranked diagnoses with citations</section>
-      <section name="differential_diagnosis">3-6 alternatives with explicit reasoning</section>
-      <section name="reasoning">4-7 bullets walking from data → diagnosis</section>
-    </tab>
-    
-    <tab name="treatment_and_safety" order="3">
-      <section name="immediate_actions">3-8 bullets for first 0-24 hours</section>
-      <section name="diagnostic_workup">4-10 bullets grouped logically</section>
-      <section name="definitive_management">Structured by diagnosis type</section>
-      <section name="medication_safety">4-8 bullets on high-risk drugs and monitoring</section>
-    </tab>
-  </tab_structure>
-  
-  <visual_findings_format>
-    For each finding, use: [Finding description] | Severity: [critical/moderate/mild] | Coordinates: [ymin, xmin, ymax, xmax] | Label: [Short name]
-  </visual_findings_format>
-  
-  <disclaimer>
-    ⚠️ **AI-Generated Evidence-Based Response**
-    This response is generated using evidence from peer-reviewed literature. AI can make mistakes. Verify critical information with primary sources.
-  </disclaimer>
-  
-  <section_order>
-    1. Clinical Analysis
-    2. Diagnosis &amp; Logic
-    3. Treatment &amp; Safety
-    4. Visual Findings
-    5. Disclaimer
-    6. References
-    7. Follow-Up Questions
-  </section_order>
-</image_analysis_instructions>
-`;
 }

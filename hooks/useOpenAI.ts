@@ -1,7 +1,7 @@
 /**
- * useGemini Hook - Streaming AI Chat Interface
- * 
- * Provides a React hook for interacting with the Gemini AI chat API
+ * useOpenAI Hook - Streaming AI Chat Interface
+ *
+ * Provides a React hook for interacting with the OpenAI chat API
  * with streaming responses and file upload support.
  */
 
@@ -28,22 +28,22 @@ export interface ChatMessage {
   }>;
 }
 
-export interface UseGeminiOptions {
+export interface UseOpenAIOptions {
   mode: 'doctor' | 'general';
   onMessage?: (message: ChatMessage) => void;
   onError?: (error: string) => void;
 }
 
-export interface UseGeminiReturn {
+export interface UseOpenAIReturn {
   messages: ChatMessage[];
   loading: boolean;
   error: string | null;
-  sendMessage: (content: string, files?: File[], history?: ChatMessage[], retryCount?: number) => Promise<any>;
+  sendMessage: (content: string, files?: File[], history?: ChatMessage[], retryCount?: number, isStudyMode?: boolean) => Promise<any>;
   clearMessages: () => void;
   abortRequest: () => void;
 }
 
-export function useGemini(options: UseGeminiOptions): UseGeminiReturn {
+export function useOpenAI(options: UseOpenAIOptions): UseOpenAIReturn {
   const { mode, onMessage, onError } = options;
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -52,7 +52,7 @@ export function useGemini(options: UseGeminiOptions): UseGeminiReturn {
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  const sendMessage = useCallback(async (content: string, files?: File[], history?: ChatMessage[], retryCount = 0) => {
+  const sendMessage = useCallback(async (content: string, files?: File[], history?: ChatMessage[], retryCount = 0, isStudyMode = false) => {
     if (loading) return null;
 
     setLoading(true);
@@ -83,14 +83,11 @@ export function useGemini(options: UseGeminiOptions): UseGeminiReturn {
       const requestBody = {
         messages: updatedHistory,
         mode,
-        files: files ? await Promise.all(files.map(async (file) => ({
-          name: file.name,
-          type: file.type,
-          data: await fileToBase64(file),
-        }))) : undefined,
+        files: files ? await Promise.all(files.map(fileToDataUrl)) : undefined,
+        isStudyMode,
       };
 
-      console.log("🔍 DEBUG: useGemini sending request:", {
+      console.log("🔍 DEBUG: useOpenAI sending request:", {
         url: '/api/chat',
         method: 'POST',
         messagesCount: updatedHistory.length,
@@ -109,7 +106,7 @@ export function useGemini(options: UseGeminiOptions): UseGeminiReturn {
         signal: abortControllerRef.current?.signal,
       });
 
-      console.log("🔍 DEBUG: useGemini received response:", {
+      console.log("🔍 DEBUG: useOpenAI received response:", {
         status: response.status,
         ok: response.ok,
         headers: Object.fromEntries(response.headers.entries())
@@ -142,16 +139,16 @@ export function useGemini(options: UseGeminiOptions): UseGeminiReturn {
           setError(null);
 
           // Retry the request
-          return sendMessage(content, files, history, retryCount + 1);
+          return sendMessage(content, files, history, retryCount + 1, isStudyMode);
         }
 
         // Handle specific error types with better user messages
         if (response.status === 503 || errorType === 'service_unavailable') {
-          errorMessage = "🔄 Google's AI service is experiencing high demand. Please try again in a few moments.";
+          errorMessage = "🔄 OpenAI's API is experiencing high demand. Please try again in a few moments.";
         } else if (response.status === 429) {
           errorMessage = "⏱️ Rate limit reached. Please wait a moment before sending another message.";
         } else if (response.status === 401) {
-          errorMessage = "🔑 Authentication error. Please check your API configuration.";
+          errorMessage = "🔑 Authentication error. Please check your OpenAI API configuration.";
         }
 
         throw new Error(errorMessage);
@@ -171,6 +168,7 @@ export function useGemini(options: UseGeminiOptions): UseGeminiReturn {
         let assistantContent = '';
         let visualFindings: any[] = [];
         let medicalImages: any[] = [];
+        let model = mode === 'doctor' ? 'gpt-4o' : 'gpt-4o-mini';
 
         // Only add assistant message to internal state if no external history is provided
         if (!history) {
@@ -202,36 +200,37 @@ export function useGemini(options: UseGeminiOptions): UseGeminiReturn {
                 try {
                   const parsed = JSON.parse(data);
 
+                  if (parsed.model) {
+                    model = parsed.model;
+                  }
+
+                  if (parsed.visualFindings) {
+                    visualFindings = parsed.visualFindings;
+                  }
+
+                  if (parsed.medicalImages) {
+                    medicalImages = parsed.medicalImages;
+                  }
+
                   if (parsed.content) {
                     assistantContent += parsed.content;
+                  }
 
-                    // Only update internal state if no external history is provided
-                    if (!history) {
-                      setMessages(prev => {
-                        const newMessages = [...prev];
-                        const lastMessage = newMessages[newMessages.length - 1];
-                        if (lastMessage.role === 'assistant') {
-                          lastMessage.content = assistantContent;
-                          if (parsed.visualFindings) {
-                            lastMessage.visualFindings = parsed.visualFindings;
-                            visualFindings = parsed.visualFindings;
-                          }
-                          if (parsed.medicalImages) {
-                            lastMessage.medicalImages = parsed.medicalImages;
-                            medicalImages = parsed.medicalImages;
-                          }
+                  if (!history) {
+                    setMessages(prev => {
+                      const newMessages = [...prev];
+                      const lastMessage = newMessages[newMessages.length - 1];
+                      if (lastMessage.role === 'assistant') {
+                        lastMessage.content = assistantContent;
+                        if (visualFindings.length > 0) {
+                          lastMessage.visualFindings = visualFindings;
                         }
-                        return newMessages;
-                      });
-                    } else {
-                      // Store for return value even if not updating internal state
-                      if (parsed.visualFindings) {
-                        visualFindings = parsed.visualFindings;
+                        if (medicalImages.length > 0) {
+                          lastMessage.medicalImages = medicalImages;
+                        }
                       }
-                      if (parsed.medicalImages) {
-                        medicalImages = parsed.medicalImages;
-                      }
-                    }
+                      return newMessages;
+                    });
                   }
                 } catch (parseError) {
                   console.warn('Failed to parse streaming data:', parseError);
@@ -248,14 +247,14 @@ export function useGemini(options: UseGeminiOptions): UseGeminiReturn {
           response: assistantContent,
           medicalImages,
           visualFindings,
-          model: 'gemini-2.5-flash',
+          model,
         };
       } else {
         // Handle regular JSON response
-        console.log("🔍 DEBUG: useGemini parsing JSON response");
+        console.log("🔍 DEBUG: useOpenAI parsing JSON response");
         const result = await response.json();
 
-        console.log("🔍 DEBUG: useGemini parsed result:", {
+        console.log("🔍 DEBUG: useOpenAI parsed result:", {
           hasResponse: !!result.response,
           responseLength: result.response?.length || 0,
           responsePreview: result.response?.substring(0, 100) + "...",
@@ -275,9 +274,9 @@ export function useGemini(options: UseGeminiOptions): UseGeminiReturn {
           setMessages(prev => [...prev, assistantMessage]);
           onMessage?.(assistantMessage);
 
-          console.log("🔍 DEBUG: useGemini updated internal messages");
+          console.log("🔍 DEBUG: useOpenAI updated internal messages");
         } else {
-          console.log("🔍 DEBUG: useGemini skipping internal state update (external history provided)");
+          console.log("🔍 DEBUG: useOpenAI skipping internal state update (external history provided)");
         }
 
         // Return result in expected format
@@ -285,10 +284,10 @@ export function useGemini(options: UseGeminiOptions): UseGeminiReturn {
           response: result.response || '',
           medicalImages: result.medicalImages || [],
           visualFindings: result.visualFindings || [],
-          model: result.model || 'gemini-2.5-flash',
+          model: result.model || (mode === 'doctor' ? 'gpt-4o' : 'gpt-4o-mini'),
         };
 
-        console.log("🔍 DEBUG: useGemini returning:", {
+        console.log("🔍 DEBUG: useOpenAI returning:", {
           hasResponse: !!returnValue.response,
           responseLength: returnValue.response?.length || 0,
           medicalImagesCount: returnValue.medicalImages?.length || 0,
@@ -299,7 +298,7 @@ export function useGemini(options: UseGeminiOptions): UseGeminiReturn {
       }
 
     } catch (err: any) {
-      console.error("🔍 DEBUG: useGemini error:", {
+      console.error("🔍 DEBUG: useOpenAI error:", {
         name: err.name,
         message: err.message,
         isAbortError: err.name === 'AbortError'
@@ -321,7 +320,7 @@ export function useGemini(options: UseGeminiOptions): UseGeminiReturn {
 
       return null;
     } finally {
-      console.log("🔍 DEBUG: useGemini finally block - setting loading to false");
+      console.log("🔍 DEBUG: useOpenAI finally block - setting loading to false");
       setLoading(false);
       abortControllerRef.current = null;
     }
@@ -360,6 +359,20 @@ async function fileToBase64(file: File): Promise<string> {
       // Remove the data URL prefix (e.g., "data:image/jpeg;base64,")
       const base64 = result.split(',')[1];
       resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Convert File to data URL (includes mime prefix for server-side vision input)
+ */
+async function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      resolve(reader.result as string);
     };
     reader.onerror = reject;
     reader.readAsDataURL(file);
