@@ -362,36 +362,7 @@ function LearnMoreCapabilities({
                         </svg>
                       </button>
 
-                      {/* Image Preview on Hover - Side by Side */}
-                      {imageUrls && imageUrls.length > 0 && isHovered && (
-                        <>
-                          {/* Left Image Preview - Only show if 2+ images */}
-                          {imageUrls.length >= 2 && (
-                            <div
-                              className="absolute right-full mr-3 top-0 z-50 pointer-events-none bg-white rounded-lg shadow-lg p-1.5"
-                              style={{ width: '140px', height: '140px' }}
-                            >
-                              <img
-                                src={imageUrls[0]}
-                                alt="Preview 1"
-                                className="w-full h-full object-contain"
-                              />
-                            </div>
-                          )}
-                          
-                          {/* Right Image Preview - Always show */}
-                          <div
-                            className="absolute left-full ml-3 top-0 z-50 pointer-events-none bg-white rounded-lg shadow-lg p-1.5"
-                            style={{ width: '140px', height: '140px' }}
-                          >
-                            <img
-                              src={imageUrls.length >= 2 ? imageUrls[1] : imageUrls[0]}
-                              alt={`Preview ${imageUrls.length >= 2 ? '2' : '1'}`}
-                              className="w-full h-full object-contain"
-                            />
-                          </div>
-                        </>
-                      )}
+                      {/* Image Preview removed for radiology cleanup */}
                     </div>
                   );
                 })}

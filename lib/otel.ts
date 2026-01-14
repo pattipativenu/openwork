@@ -33,9 +33,6 @@ export async function initObservability(): Promise<void> {
         // Register with Phoenix using the correct API
         register({
             projectName: PROJECT_NAME,
-            // INCREASE LIMITS to prevent JSON truncation which crashes Phoenix UI
-            spanAttributeValueLengthLimit: 16384, // 16KB limit
-            spanAttributeCountLimit: 256,
         });
 
         // Manually instrument OpenAI client (preferred for Next.js)
