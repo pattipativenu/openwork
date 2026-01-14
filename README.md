@@ -4,10 +4,8 @@ An advanced medical AI assistant providing evidence-based clinical information t
 
 ## 📊 Project Stats
 
-- **Lines of Code**: 50,056 across 147 production files
 - **Evidence Sources**: 57 integrated medical databases and APIs
 - **Image Analysis Accuracy**: 93%+ (multi-stage vision pipeline)
-- **Development**: Built with Kiro AI Assistant (75% time savings)
 - **Tech Stack**: Next.js 16, React 19, TypeScript 5, Tailwind CSS v4
 - **AI Models**: OpenAI GPT-4o (Doctor Mode), GPT-4o-mini (General Mode & Vision)
 - **Last Updated**: January 2026
@@ -17,7 +15,7 @@ An advanced medical AI assistant providing evidence-based clinical information t
 ### Evidence-Based Medicine
 - **Evidence-Only Architecture**: System uses ONLY curated medical databases—Google Search is disabled by design
 - **57 Integrated Medical Databases**: PubMed, Cochrane, Europe PMC, WHO, CDC, NICE, FDA, and 50+ more sources
-- **50,056 Lines of Production Code**: Comprehensive medical AI system built with Kiro AI assistance
+- **Comprehensive Medical AI System**: Integrating real-time evidence synthesis with advanced LLM reasoning
 - **BGE Cross-Encoder Reranking**: Advanced semantic reranking of ALL 57+ evidence sources using BGE Cross-Encoder, with lexical tie-breaker when scores cluster
 - **Comprehensive Reranking System**: Every evidence source (PubMed, Cochrane, Europe PMC, OpenAlex, Clinical Trials, DailyMed, Tavily, etc.) is reranked by relevance using Jaccard similarity with domain-specific boosting before LLM processing
 - **Anchor Guidelines System**: Pre-defined gold-standard guidelines for 12+ common clinical scenarios (sepsis, CAP, diabetes, heart failure, pulmonary embolism, DAPT, etc.) with built-in conflict resolution rules
@@ -165,8 +163,6 @@ An advanced medical AI assistant providing evidence-based clinical information t
 ./scripts/check-security.sh
 ```
 
-See [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md) for complete security details.
-
 ## 🖼️ Image Sources
 
 **Primary Medical Images:**
@@ -186,7 +182,6 @@ See [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md) for complete security details
 **Primary Medical Images:**
 - **Open-i (NLM)**: Free biomedical images with attribution
 - **Serper API**: Supplementary medical image search
-- **InjuryMap**: CC BY 4.0 anatomy illustrations
 
 All images include proper attribution and licensing compliance.
 
@@ -549,8 +544,6 @@ See `.env.local` for all available configuration options.
 - **PROJECT_DESCRIPTION.md** - Complete project description
 - **DOCTOR_MODE_ARCHITECTURE.md** - Detailed doctor mode documentation
 - **GENERAL_MODE_ARCHITECTURE.md** - Detailed general mode documentation
-- **KIRO_USAGE_DOCUMENTATION.md** - Kiro AI assistant documentation
-- **lib/clinical-decision-support/README.md** - Clinical decision support module documentation
 - **IMPLEMENTATION_SUMMARY.md** - Latest implementation summary
 
 ## 🤝 Contributing
@@ -570,17 +563,11 @@ MedGuidance AI uses medical images from open-access sources with proper attribut
 - **Attribution**: All Open-i images display proper attribution in the image lightbox with direct links to the source
 - **Usage**: Medical imaging, radiology, pathology, clinical images
 
-**InjuryMap Free Human Anatomy Illustrations**
-- **Source**: https://www.injurymap.com/free-human-anatomy-illustrations
-- **License**: CC BY 4.0 (Creative Commons Attribution 4.0 International)
-- **Content**: 19 high-quality vector anatomy illustrations
-- **Attribution**: All InjuryMap images display "CC BY 4.0" license with attribution and direct links
-- **Usage**: Musculoskeletal anatomy (neck, shoulder, spine, knee, hip, ankle, elbow, wrist)
-
 ### How We Display Attribution
 
 Every medical image in MedGuidance AI includes:
-- **Source badge** on thumbnail (📚 InjuryMap, 🔬 NLM)
+
+- **Source badge** on thumbnail (🔬 NLM)
 - **Full attribution** accessible via Info (ℹ️) button in lightbox
 - **License information** (CC BY 4.0, Public Domain, etc.)
 - **Direct link** to source website
@@ -613,4 +600,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-Built with ❤️ using Kiro, Next.js, React, and OpenAI GPT-4o
+Built with ❤️ using Next.js, React, and OpenAI GPT-4o

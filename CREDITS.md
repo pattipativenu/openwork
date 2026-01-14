@@ -12,15 +12,6 @@ MedGuidance AI uses medical images from open-access sources. All images are prop
 - **Usage**: Medical imaging, radiology, pathology, clinical images
 - **In Use**: ✅ Active
 
-### 2. InjuryMap Free Human Anatomy Illustrations
-- **Website**: https://www.injurymap.com/free-human-anatomy-illustrations
-- **License**: CC BY 4.0 (Creative Commons Attribution 4.0 International)
-- **Content**: High-quality vector anatomy illustrations (19 images)
-- **Attribution**: "Image from InjuryMap (https://www.injurymap.com/free-human-anatomy-illustrations). Licensed under CC BY 4.0."
-- **Usage**: Musculoskeletal anatomy, body parts, injury illustrations
-- **In Use**: ✅ Active
-
-
 
 ## How Attribution is Displayed
 
@@ -34,18 +25,6 @@ When users click on an image to zoom in, they can click the **Info (ℹ️) butt
 
 ## License Compliance
 
-### CC BY 4.0 (InjuryMap)
-Under Creative Commons Attribution 4.0 International License, you are free to:
-- **Share**: Copy and redistribute the material
-- **Adapt**: Remix, transform, and build upon the material
-
-**Requirements**:
-- Give appropriate credit
-- Provide a link to the license
-- Indicate if changes were made
-
-
-
 ### Open-i (NLM)
 Images from PubMed Central are generally free for reuse with attribution. Specific licensing may vary by article.
 
@@ -57,8 +36,8 @@ All images in MedGuidance AI include structured attribution data:
 {
   url: string;           // Image URL
   title: string;         // Image title
-  source: string;        // Source badge (e.g., "Open-i", "InjuryMap")
-  license: string;       // License type (e.g., "CC BY 4.0")
+  source: string;        // Source badge (e.g., "Open-i")
+  license: string;       // License type
   attribution: string;   // Full attribution text
 }
 ```
@@ -68,7 +47,6 @@ All images in MedGuidance AI include structured attribution data:
 We thank the following organizations for making their medical images freely available:
 
 - **National Library of Medicine (NLM)** - Open-i biomedical image search
-- **InjuryMap** - Free human anatomy illustrations
 - **PubMed Central** - Open-access biomedical literature
 
 ## Questions?
