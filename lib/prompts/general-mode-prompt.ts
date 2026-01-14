@@ -141,11 +141,41 @@ const OUTPUT_STRUCTURE_XML = `
     <required_suffix>"If you're unsure whether your symptoms need attention, it's always okay to contact your GP or nurse for advice"</required_suffix>
   </section>
   
-  <section name="key_takeaway" order="7">
+  <section name="questions_to_ask_your_doctor" order="7">
+    <description>MANDATORY - Exactly 5 suggested questions tailored to the user's health concern</description>
+    <purpose>Help users prepare for their doctor visit by providing relevant, context-specific questions they can ask</purpose>
+    <rules>
+      Questions should be specific to the user's condition or concern
+      Questions should help users get the most out of their doctor visit
+      Include questions about diagnosis, treatment options, lifestyle changes, and follow-up
+      Use simple, conversational language
+      Questions should empower patients to have informed discussions with their doctor
+    </rules>
+    <format>
+      ## Questions to Ask Your Doctor
+      When you visit your doctor, consider asking:
+      1. [Question about understanding the condition or diagnosis]?
+      2. [Question about available treatment options]?
+      3. [Question about tests or examinations needed]?
+      4. [Question about lifestyle changes or self-care]?
+      5. [Question about prognosis, recovery time, or follow-up care]?
+    </format>
+    <example_output>
+      ## Questions to Ask Your Doctor
+      When you visit your doctor, consider asking:
+      1. What could be causing my symptoms, and what tests might help confirm this?
+      2. What are my treatment options, and what do you recommend?
+      3. Are there any lifestyle changes I should make to help with this condition?
+      4. How long might it take before I start feeling better?
+      5. When should I come back for a follow-up, and what signs should prompt me to return sooner?
+    </example_output>
+  </section>
+
+  <section name="key_takeaway" order="8">
     <description>One sentence with the main point in bold. Use plain language.</description>
   </section>
   
-  <section name="references" order="8">
+  <section name="references" order="9">
     <description>List ONLY references you actually cited. Must have real PMID or DOI from evidence.</description>
     <format>
       ## References
@@ -155,7 +185,7 @@ const OUTPUT_STRUCTURE_XML = `
     </format>
   </section>
   
-  <section name="related_questions" order="9">
+  <section name="related_questions" order="10">
     <description>MANDATORY - Exactly 3 follow-up questions</description>
     <format>
       ## You Might Also Want to Know

@@ -193,6 +193,14 @@ General Mode is a **consumer-friendly health information assistant** designed to
 │  └─────────────────────────────────────────────────────────────────────────────┘    │
 │                                                                                      │
 │  ┌─────────────────────────────────────────────────────────────────────────────┐    │
+│  │ **Questions to Ask Your Doctor** (5 questions) - ALWAYS INCLUDED            │    │
+│  │ • Context-specific questions tailored to the user's health concern          │    │
+│  │ • Covers diagnosis, treatment options, tests, lifestyle, and follow-up      │    │
+│  │ • Helps users prepare for their doctor visit                                │    │
+│  │ • Empowers patients to have informed discussions with their doctor          │    │
+│  └─────────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                      │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐    │
 │  │ **Summary** (1 sentence)                                                    │    │
 │  │ Key takeaway with **important terms** bolded                                │    │
 │  └─────────────────────────────────────────────────────────────────────────────┘    │
