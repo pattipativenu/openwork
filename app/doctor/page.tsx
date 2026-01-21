@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Upload, X, FileText, Image as ImageIcon, Send, Loader2 } from "lucide-react";
-import { useOpenAI } from "@/hooks/useOpenAI";
+import { useGemini } from "@/hooks/useGemini";
 import MarkdownTypewriter from "@/components/ui/markdown-typewriter";
 import { parseResponseIntoSections } from "@/lib/response-parser";
 import { EvidenceLogosScroll } from "@/components/ui/evidence-logos-scroll";
@@ -393,7 +393,7 @@ export default function DoctorMode() {
   const [conversationId, setConversationId] = useState<string>(`conv_${Date.now()}`);
   const historyRef = useRef<HTMLDivElement>(null);
 
-  const { sendMessage, loading, error } = useOpenAI({ mode: "doctor" });
+  const { sendMessage, loading, error } = useGemini({ mode: "doctor" });
 
   // Save conversation to localStorage whenever chatHistory changes
   useEffect(() => {

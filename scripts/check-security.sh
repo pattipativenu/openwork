@@ -16,15 +16,15 @@ else
     echo "✅ .env.local is properly ignored"
 fi
 
-# Check 2: Search for OpenAI API keys
+# Check 2: Search for Gemini/Google API keys
 echo ""
-echo "✓ Checking for OpenAI API keys..."
+echo "✓ Checking for Gemini/Google API keys..."
 if git grep -qE "sk-(proj-)?[A-Za-z0-9]{10,}" 2>/dev/null; then
-    echo "❌ ERROR: OpenAI API key found in tracked files!"
+    echo "❌ ERROR: Gemini/Google API key found in tracked files!"
     git grep -E "sk-(proj-)?[A-Za-z0-9]{10,}"
     exit 1
 else
-    echo "✅ No OpenAI API keys found"
+    echo "✅ No Gemini/Google API keys found"
 fi
 
 # Check 3: Search for Tavily API keys

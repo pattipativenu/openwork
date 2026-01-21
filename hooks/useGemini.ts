@@ -1,7 +1,7 @@
 /**
- * useOpenAI Hook - Streaming AI Chat Interface
+ * useGemini Hook - Streaming AI Chat Interface
  *
- * Provides a React hook for interacting with the OpenAI chat API
+ * Provides a React hook for interacting with the Gemini chat API
  * with streaming responses and file upload support.
  */
 
@@ -28,13 +28,13 @@ export interface ChatMessage {
   }>;
 }
 
-export interface UseOpenAIOptions {
-  mode: 'doctor' | 'general';
+export interface UseGeminiOptions {
+  mode: 'doctor';
   onMessage?: (message: ChatMessage) => void;
   onError?: (error: string) => void;
 }
 
-export interface UseOpenAIReturn {
+export interface UseGeminiReturn {
   messages: ChatMessage[];
   loading: boolean;
   error: string | null;
@@ -43,7 +43,7 @@ export interface UseOpenAIReturn {
   abortRequest: () => void;
 }
 
-export function useOpenAI(options: UseOpenAIOptions): UseOpenAIReturn {
+export function useGemini(options: UseGeminiOptions): UseGeminiReturn {
   const { mode, onMessage, onError } = options;
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -87,7 +87,7 @@ export function useOpenAI(options: UseOpenAIOptions): UseOpenAIReturn {
         isStudyMode,
       };
 
-      console.log("🔍 DEBUG: useOpenAI sending request:", {
+      console.log("🔍 DEBUG: useGemini sent request:", {
         url: '/api/chat',
         method: 'POST',
         messagesCount: updatedHistory.length,
@@ -106,7 +106,7 @@ export function useOpenAI(options: UseOpenAIOptions): UseOpenAIReturn {
         signal: abortControllerRef.current?.signal,
       });
 
-      console.log("🔍 DEBUG: useOpenAI received response:", {
+      console.log("🔍 DEBUG: useGemini received response:", {
         status: response.status,
         ok: response.ok,
         headers: Object.fromEntries(response.headers.entries())
@@ -144,11 +144,11 @@ export function useOpenAI(options: UseOpenAIOptions): UseOpenAIReturn {
 
         // Handle specific error types with better user messages
         if (response.status === 503 || errorType === 'service_unavailable') {
-          errorMessage = "🔄 OpenAI's API is experiencing high demand. Please try again in a few moments.";
+          errorMessage = "🔄 Gemini's API is experiencing high demand. Please try again in a few moments.";
         } else if (response.status === 429) {
           errorMessage = "⏱️ Rate limit reached. Please wait a moment before sending another message.";
         } else if (response.status === 401) {
-          errorMessage = "🔑 Authentication error. Please check your OpenAI API configuration.";
+          errorMessage = "🔑 Authentication error. Please check your Gemini API configuration.";
         }
 
         throw new Error(errorMessage);
@@ -168,7 +168,7 @@ export function useOpenAI(options: UseOpenAIOptions): UseOpenAIReturn {
         let assistantContent = '';
         let visualFindings: any[] = [];
         let medicalImages: any[] = [];
-        let model = mode === 'doctor' ? 'gpt-4o' : 'gpt-4o-mini';
+        let model = 'gemini-2.0-pro-exp';
 
         // Only add assistant message to internal state if no external history is provided
         if (!history) {
@@ -251,10 +251,10 @@ export function useOpenAI(options: UseOpenAIOptions): UseOpenAIReturn {
         };
       } else {
         // Handle regular JSON response
-        console.log("🔍 DEBUG: useOpenAI parsing JSON response");
+        console.log("🔍 DEBUG: useGemini parsing JSON response");
         const result = await response.json();
 
-        console.log("🔍 DEBUG: useOpenAI parsed result:", {
+        console.log("🔍 DEBUG: useGemini parsed result:", {
           hasResponse: !!result.response,
           responseLength: result.response?.length || 0,
           responsePreview: result.response?.substring(0, 100) + "...",
@@ -274,9 +274,9 @@ export function useOpenAI(options: UseOpenAIOptions): UseOpenAIReturn {
           setMessages(prev => [...prev, assistantMessage]);
           onMessage?.(assistantMessage);
 
-          console.log("🔍 DEBUG: useOpenAI updated internal messages");
+          console.log("🔍 DEBUG: useGemini updated internal messages");
         } else {
-          console.log("🔍 DEBUG: useOpenAI skipping internal state update (external history provided)");
+          console.log("🔍 DEBUG: useGemini skipping internal state update (external history provided)");
         }
 
         // Return result in expected format
@@ -284,10 +284,10 @@ export function useOpenAI(options: UseOpenAIOptions): UseOpenAIReturn {
           response: result.response || '',
           medicalImages: result.medicalImages || [],
           visualFindings: result.visualFindings || [],
-          model: result.model || (mode === 'doctor' ? 'gpt-4o' : 'gpt-4o-mini'),
+          model: result.model || 'gemini-2.0-pro-exp',
         };
 
-        console.log("🔍 DEBUG: useOpenAI returning:", {
+        console.log("🔍 DEBUG: useGemini returning:", {
           hasResponse: !!returnValue.response,
           responseLength: returnValue.response?.length || 0,
           medicalImagesCount: returnValue.medicalImages?.length || 0,
@@ -298,7 +298,7 @@ export function useOpenAI(options: UseOpenAIOptions): UseOpenAIReturn {
       }
 
     } catch (err: any) {
-      console.error("🔍 DEBUG: useOpenAI error:", {
+      console.error("🔍 DEBUG: useGemini error:", {
         name: err.name,
         message: err.message,
         isAbortError: err.name === 'AbortError'
@@ -320,7 +320,7 @@ export function useOpenAI(options: UseOpenAIOptions): UseOpenAIReturn {
 
       return null;
     } finally {
-      console.log("🔍 DEBUG: useOpenAI finally block - setting loading to false");
+      console.log("🔍 DEBUG: useGemini finally block - setting loading to false");
       setLoading(false);
       abortControllerRef.current = null;
     }

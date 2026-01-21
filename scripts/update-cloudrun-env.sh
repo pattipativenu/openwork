@@ -19,14 +19,14 @@ if [ ! -f .env.local ]; then
 fi
 
 # Extract key environment variables (excluding local-only ones)
-OPENAI_API_KEY=$(grep "^OPENAI_API_KEY=" .env.local | cut -d= -f2)
+GOOGLE_GENERATIVE_AI_API_KEY=$(grep "^GOOGLE_GENERATIVE_AI_API_KEY=" .env.local | cut -d= -f2)
 TAVILY_API_KEY=$(grep "^TAVILY_API_KEY=" .env.local | cut -d= -f2)
 NCBI_API_KEY=$(grep "^NCBI_API_KEY=" .env.local | cut -d= -f2)
 SERPER_API_KEY=$(grep "^SERPER_API_KEY=" .env.local | cut -d= -f2)
 
 # Check if required keys exist
-if [ -z "$OPENAI_API_KEY" ]; then
-  echo "❌ Error: OPENAI_API_KEY not found in .env.local"
+if [ -z "$GOOGLE_GENERATIVE_AI_API_KEY" ]; then
+  echo "❌ Error: GOOGLE_GENERATIVE_AI_API_KEY not found in .env.local"
   exit 1
 fi
 
@@ -37,7 +37,7 @@ echo ""
 echo "📤 Updating Cloud Run service..."
 gcloud run services update $SERVICE_NAME \
   --region $REGION \
-  --update-env-vars "OPENAI_API_KEY=${OPENAI_API_KEY},TAVILY_API_KEY=${TAVILY_API_KEY},NCBI_API_KEY=${NCBI_API_KEY},SERPER_API_KEY=${SERPER_API_KEY},NEXT_TELEMETRY_DISABLED=1"
+  --update-env-vars "GOOGLE_GENERATIVE_AI_API_KEY=${GOOGLE_GENERATIVE_AI_API_KEY},TAVILY_API_KEY=${TAVILY_API_KEY},NCBI_API_KEY=${NCBI_API_KEY},SERPER_API_KEY=${SERPER_API_KEY},NEXT_TELEMETRY_DISABLED=1"
 
 echo ""
 echo "✅ Environment variables updated successfully!"

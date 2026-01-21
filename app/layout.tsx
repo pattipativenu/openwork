@@ -32,7 +32,7 @@ const playfair = Playfair_Display({
 
 export const metadata: Metadata = {
   title: "MedGuidance AI - Evidence-Based Medical Insights",
-  description: "Advanced medical AI assistant providing evidence-based clinical information through Doctor Mode for healthcare professionals and General Mode for consumers.",
+  description: "Advanced medical AI assistant providing evidence-based clinical information for healthcare professionals.",
 };
 
 export default function RootLayout({

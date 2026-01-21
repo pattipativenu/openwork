@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, FileText, Image as ImageIcon, Send, Loader2 } from "lucide-react";
-import { useOpenAI } from "@/hooks/useOpenAI";
+import { useGemini } from "@/hooks/useGemini";
 import { parseResponseIntoSections } from "@/lib/response-parser";
 import { EvidenceLogosScroll } from "@/components/ui/evidence-logos-scroll";
 import { ResponseActions } from "@/components/ui/response-actions";
@@ -17,7 +17,7 @@ import { UnifiedCitationRenderer } from "@/components/ui/unified-citation-render
 import { RotatingText } from "@/components/ui/rotating-text";
 import { UnifiedReferenceSection } from "@/components/ui/unified-reference-section";
 import { parseResponse } from "@/lib/citation/unified-parser";
-import { DOCTOR_MODE_CAPABILITIES, GENERAL_MODE_CAPABILITIES } from "@/lib/learn-more-capabilities";
+import { DOCTOR_MODE_CAPABILITIES } from "@/lib/learn-more-capabilities";
 import { saveConversation, getConversationById } from "@/lib/storage";
 import StudyQuizRenderer from "@/components/ui/study-quiz-renderer";
 
@@ -220,7 +220,7 @@ function SimpleResponse({
   showFollowUpQuestions?: boolean;
   medicalImages?: MedicalImage[];
   conversationId?: string;
-  mode: 'doctor' | 'general';
+    mode: 'doctor';
     onQuestionSelect?: (question: string) => void;
 }) {
   const [lightboxImage, setLightboxImage] = useState<{ url: string; title: string; source?: string; license?: string } | null>(null);
@@ -295,7 +295,7 @@ function LearnMoreCapabilities({
   onQuestionClick,
   loading
 }: {
-  mode: 'doctor' | 'general';
+    mode: 'doctor';
   onQuestionClick: (question: string, imageUrls?: string[]) => void;
   loading: boolean;
 }) {
@@ -304,11 +304,7 @@ function LearnMoreCapabilities({
 
 
   // Select capabilities based on mode
-  const capabilities: Array<{
-    title: string;
-    icon: React.ReactNode;
-    questions: (string | { text: string; imageUrls?: string[] })[];
-  }> = mode === 'doctor' ? DOCTOR_MODE_CAPABILITIES : GENERAL_MODE_CAPABILITIES;
+  const capabilities = DOCTOR_MODE_CAPABILITIES;
 
   // Helper to get question text
   const getQuestionText = (question: string | { text: string; imageUrls?: string[] }): string => {
@@ -428,7 +424,7 @@ function LearnMoreCapabilities({
 }
 
 export default function UnifiedDashboard() {
-  const [mode, setMode] = useState<'doctor' | 'general'>('doctor');
+  const mode = 'doctor';
   const [query, setQuery] = useState("");
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -446,13 +442,13 @@ export default function UnifiedDashboard() {
   const historyRef = useRef<HTMLDivElement>(null);
 
 
-  const { sendMessage, loading, error, clearMessages } = useOpenAI({
+  const { sendMessage, loading, error, clearMessages } = useGemini({
     mode,
     onMessage: (message) => {
-      console.log("🔍 DEBUG: useOpenAI onMessage callback:", message);
+      console.log("🔍 DEBUG: useGemini onMessage callback:", message);
     },
     onError: (error) => {
-      console.log("🔍 DEBUG: useOpenAI onError callback:", error);
+      console.log("🔍 DEBUG: useGemini onError callback:", error);
     }
   });
 
@@ -771,7 +767,7 @@ export default function UnifiedDashboard() {
         stack: error.stack
       });
 
-      // We don't have a local error setter, rely on console logs and useOpenAI error state
+      // We don't have a local error setter, rely on console logs and useGemini error state
     }
   };
 
@@ -850,38 +846,7 @@ export default function UnifiedDashboard() {
 
             <div className="flex items-center gap-4">
               {/* Mode Selection Buttons in Navigation */}
-              <div className="flex items-center bg-gray-100 rounded-lg p-1">
-                <button
-                  onClick={() => setMode('doctor')}
-                  className={`
-                    flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all duration-200
-                    ${mode === 'doctor'
-                      ? 'bg-white text-blue-600 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
-                    }
-                  `}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-                  </svg>
-                  Doctor Mode
-                </button>
-                <button
-                  onClick={() => setMode('general')}
-                  className={`
-                    flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all duration-200
-                    ${mode === 'general'
-                      ? 'bg-white text-purple-600 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
-                    }
-                  `}
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                  </svg>
-                  General Mode
-                </button>
-              </div>
+
             </div>
           </div>
         </header>
