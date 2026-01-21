@@ -25,7 +25,7 @@ export interface AgentResult<T = any> {
 
 // Agent 1: Query Intelligence Output
 export interface QueryAnalysis {
-  intent: 'treatment_guideline' | 'comparative_analysis' | 'mechanism' | 'dosing' | 'adverse_events' | 'diagnostic_criteria';
+  intent: 'clinical_decision' | 'education' | 'drug_information' | 'diagnostics';
   entities: {
     diseases: string[];
     drugs: string[];
@@ -45,7 +45,7 @@ export interface QueryAnalysis {
 
 // Agent 2: Multi-Source Retrieval Output
 export interface EvidenceCandidate {
-  source: 'pubmed' | 'indian_guideline' | 'dailymed' | 'tavily_web';
+  source: 'pubmed' | 'indian_guideline' | 'dailymed' | 'tavily_web' | 'clinical_trials' | 'cochrane' | 'bmj_best_practice' | 'nice' | 'who' | 'cdc' | 'landmark_trials' | 'semantic_scholar' | 'europe_pmc' | 'pmc' | 'openalex';
   id: string;
   title: string;
   text: string;

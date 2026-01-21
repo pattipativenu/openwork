@@ -68,7 +68,28 @@ export class TwoStageReranker {
       // Chunk all documents
       const allChunks: ChunkForRerank[] = [];
       for (const { candidate, doc_level_score } of enrichedDocs) {
-        const chunks = this.chunkDocument(candidate);
+        // Convert EnhancedArticle back to EvidenceCandidate format if needed
+        const candidateForChunking: EvidenceCandidate = 'source' in candidate 
+          ? candidate as EvidenceCandidate
+          : {
+              source: 'pubmed' as const,
+              id: candidate.pmid || 'unknown',
+              title: candidate.title || 'Unknown Title',
+              text: candidate.abstract || '',
+              metadata: {
+                pmid: candidate.pmid,
+                doi: candidate.doi,
+                journal: candidate.journal,
+                authors: candidate.authors
+              },
+              full_text_available: true,
+              full_text_sections: candidate.selected_sections?.reduce((acc, section) => {
+                acc[section.section_type] = section.chunks.map(chunk => chunk.content).join('\n\n');
+                return acc;
+              }, {} as Record<string, string>)
+            };
+            
+        const chunks = this.chunkDocument(candidateForChunking);
         chunks.forEach(chunk => {
           chunk.doc_level_score = doc_level_score;
           allChunks.push(chunk);

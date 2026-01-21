@@ -23,6 +23,22 @@ export interface OpenISearchResult {
 }
 
 /**
+ * Check if query is image-related (stub)
+ */
+export function isImageQuery(query: string): boolean {
+  const imageKeywords = ['image', 'imaging', 'scan', 'x-ray', 'mri', 'ct', 'ultrasound', 'radiograph'];
+  return imageKeywords.some(keyword => query.toLowerCase().includes(keyword));
+}
+
+/**
+ * Optimize query for Open-i search (stub)
+ */
+export function optimizeOpenIQuery(query: string): string {
+  // Simple optimization - remove common stop words and focus on medical terms
+  return query.replace(/\b(the|and|or|in|on|at|to|for|of|with|by)\b/gi, ' ').trim();
+}
+
+/**
  * Comprehensive Open-i article search (stub)
  */
 export async function comprehensiveOpenIArticleSearch(

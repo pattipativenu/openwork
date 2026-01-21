@@ -207,7 +207,7 @@ export class EvidenceNormalizer {
         
         if (!seenIds.has(docId)) {
           const candidate: EvidenceCandidate = {
-            source: sourceConfig.key,
+            source: sourceConfig.key as EvidenceCandidate['source'],
             id: docId,
             title: doc.title,
             text: doc.abstract || doc.summary || doc.content || doc.text,

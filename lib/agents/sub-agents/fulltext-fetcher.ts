@@ -79,9 +79,12 @@ export class FullTextFetcher {
       
       // Try PMC first (highest priority)
       if (identifiers.pmcid || identifiers.pmid) {
-        fullTextContent = await this.fetchFromPMC(identifiers.pmcid || identifiers.pmid);
-        if (fullTextContent) {
-          source = 'pmc';
+        const pmcId = identifiers.pmcid || identifiers.pmid;
+        if (pmcId) {
+          fullTextContent = await this.fetchFromPMC(pmcId);
+          if (fullTextContent) {
+            source = 'pmc';
+          }
         }
       }
       
@@ -178,10 +181,10 @@ export class FullTextFetcher {
       const sections: FullTextSections = {};
       
       // Extract sections using regex (simplified approach)
-      const sectionMatches = xmlContent.match(/<sec[^>]*>.*?<\/sec>/gs) || [];
+      const sectionMatches = xmlContent.match(/<sec[^>]*>[\s\S]*?<\/sec>/g) || [];
       
       for (const sectionMatch of sectionMatches) {
-        const titleMatch = sectionMatch.match(/<title[^>]*>(.*?)<\/title>/s);
+        const titleMatch = sectionMatch.match(/<title[^>]*>([\s\S]*?)<\/title>/);
         const title = titleMatch ? titleMatch[1].toLowerCase() : 'other';
         
         // Extract text content (remove XML tags)
@@ -249,7 +252,7 @@ export class FullTextFetcher {
     const sections: any = {};
     
     // Look for structured abstract sections
-    const abstractMatch = xmlContent.match(/<AbstractText[^>]*>(.*?)<\/AbstractText>/gs);
+    const abstractMatch = xmlContent.match(/<AbstractText[^>]*>([\s\S]*?)<\/AbstractText>/g);
     if (abstractMatch) {
       abstractMatch.forEach((match, index) => {
         const labelMatch = match.match(/Label="([^"]*)"/) || match.match(/NlmCategory="([^"]*)"/);
@@ -525,10 +528,10 @@ export class FullTextFetcher {
       const sections: FullTextSections = {};
       
       // Extract sections using regex (simplified approach)
-      const sectionMatches = xmlContent.match(/<sec[^>]*>.*?<\/sec>/gs) || [];
+      const sectionMatches = xmlContent.match(/<sec[^>]*>[\s\S]*?<\/sec>/g) || [];
       
       for (const sectionMatch of sectionMatches) {
-        const titleMatch = sectionMatch.match(/<title[^>]*>(.*?)<\/title>/s);
+        const titleMatch = sectionMatch.match(/<title[^>]*>([\s\S]*?)<\/title>/);
         const title = titleMatch ? titleMatch[1].toLowerCase() : 'other';
         
         // Extract text content (remove XML tags)
