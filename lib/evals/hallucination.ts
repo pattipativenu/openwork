@@ -4,10 +4,10 @@
  * Uses LLM-as-a-judge pattern to detect hallucinations
  * by comparing LLM responses against the provided evidence context.
  * 
- * This implementation uses OpenAI directly for maximum compatibility.
+ * This implementation uses Google Gemini for evaluation.
  */
 
-import { openai } from "@/lib/openai";
+import { generateJSON, GEMINI_FLASH_MODEL } from "@/lib/gemini";
 
 // Hallucination evaluation system prompt (XML format)
 const HALLUCINATION_SYSTEM_PROMPT = `
@@ -64,15 +64,9 @@ export async function evaluateHallucination(
     explanation?: string;
 }> {
     try {
-        const response = await openai.chat.completions.create({
-            model: "gpt-4o",
-            temperature: 0,
-            response_format: { type: "json_object" },
-            messages: [
-                { role: "system", content: HALLUCINATION_SYSTEM_PROMPT },
-                {
-                    role: "user",
-                    content: `## User Query
+      const prompt = `${HALLUCINATION_SYSTEM_PROMPT}
+
+## User Query
 ${userQuery}
 
 ## LLM Response to Evaluate
@@ -81,13 +75,13 @@ ${llmResponse}
 ## Evidence Context (Ground Truth)
 ${evidenceContext}
 
-Evaluate whether the LLM response is factual or hallucinated based on the evidence context.`
-                }
-            ]
-        });
+Evaluate whether the LLM response is factual or hallucinated based on the evidence context.`;
 
-        const content = response.choices[0]?.message?.content || '{}';
-        const result = JSON.parse(content);
+      const result = await generateJSON<{
+        label: string;
+        confidence: number;
+        explanation: string;
+      }>(prompt, GEMINI_FLASH_MODEL, 0);
 
         return {
             label: result.label === 'hallucinated' ? 'hallucinated' : 'factual',

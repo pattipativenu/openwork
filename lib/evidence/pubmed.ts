@@ -7,7 +7,7 @@
  * - With API key: 10 requests/second
  * 
  * IMPORTANT: Add delays between requests to avoid 429 errors
- * Instrumented with OpenTelemetry for Arize Phoenix observability
+ * Instrumented with OpenTelemetry for observability
  */
 
 import { getCachedEvidence, cacheEvidence } from './cache-manager';
@@ -86,6 +86,8 @@ export interface PubMedFilters {
   humansOnly?: boolean;
   freeFullText?: boolean;
   hasAbstract?: boolean;
+  clinicalCategory?: 'therapy' | 'diagnosis' | 'etiology' | 'prognosis' | 'clinical_prediction_guides';
+  clinicalScope?: 'broad' | 'narrow';
 }
 
 /**
@@ -143,9 +145,32 @@ function buildFilterString(filters?: PubMedFilters): string {
     filterParts.push(`${startYear}:${currentYear}[dp]`);
   }
 
-  // Humans only
+  // Humans only - STRICT FILTER
   if (filters.humansOnly) {
-    filterParts.push('humans[mh]');
+    // Exclude animal-only studies using set difference logic
+    filterParts.push('("Humans"[MeSH Terms] NOT ("Animals"[MeSH Terms] NOT "Humans"[MeSH Terms]))');
+  }
+
+  // Clinical Study Categories
+  if (filters.clinicalCategory) {
+    const categoryMap: Record<string, string> = {
+      'therapy': 'therapy',
+      'diagnosis': 'diagnosis',
+      'etiology': 'etiology',
+      'prognosis': 'prognosis',
+      'clinical_prediction_guides': 'clinical prediction guides'
+    };
+
+    const scopeSuffix = filters.clinicalScope === 'narrow' ? 'narrow' : 'broad';
+    const catKey = categoryMap[filters.clinicalCategory];
+
+    if (catKey) {
+      if (catKey === 'clinical prediction guides') {
+        filterParts.push(`"${catKey}"[Filter]`);
+      } else {
+        filterParts.push(`"${catKey}_${scopeSuffix}"[Filter]`);
+      }
+    }
   }
 
   // Free full text
@@ -169,7 +194,7 @@ function buildFilterString(filters?: PubMedFilters): string {
 export async function searchPubMed(
   query: string,
   maxResults: number = 20,
-  useHistory: boolean = true,
+  useHistory: boolean = true, // Always default to true now
   filters?: PubMedFilters
 ): Promise<PubMedSearchResult> {
   return withToolSpan<PubMedSearchResult>(
@@ -183,20 +208,21 @@ export async function searchPubMed(
 
         console.log(`🔍 PubMed search: "${query}"${filterString ? ` with filters: ${filterString}` : ''}`);
 
-        // Set input attributes for the span
         span.setAttribute('input.query', query.substring(0, 500));
         span.setAttribute('input.max_results', maxResults);
         if (filterString) {
           span.setAttribute('input.filters', filterString.substring(0, 200));
         }
 
+        // STEP 1: ESearch with usehistory=y to get WebEnv/QueryKey (and first batch of IDs if retmax > 0)
+        // We set retmax=0 to just get the history pointer first, then fetch in batches
         const params = new URLSearchParams({
           db: "pubmed",
           term: enhancedQuery,
           retmode: "json",
-          retmax: maxResults.toString(),
-          usehistory: useHistory ? "y" : "n",
-          sort: "relevance", // Sort by relevance
+          retmax: "0",
+          usehistory: "y",
+          sort: "relevance",
           ...(API_KEY && { api_key: API_KEY }),
         });
 
@@ -211,19 +237,53 @@ export async function searchPubMed(
 
         const data = await response.json();
         const result = data.esearchresult;
-
         const count = parseInt(result.count || "0");
-        console.log(`✅ Found ${count} PubMed articles`);
+        const webEnv = result.webenv;
+        const queryKey = result.querykey;
 
-        // Set output attributes for the span
+        console.log(`✅ Found ${count} PubMed articles (WebEnv: ${webEnv})`);
+
+        if (count === 0 || !webEnv || !queryKey) {
+          return { count: 0, pmids: [], webEnv, queryKey };
+        }
+
+        // STEP 2: Fetch PMIDs in batches using History
+        const pmids: string[] = [];
+        const batchSize = 500;
+        const finalMax = maxResults < count ? maxResults : count;
+
+        for (let start = 0; start < finalMax; start += batchSize) {
+          const batchLimit = Math.min(batchSize, finalMax - start);
+
+          const searchParams = new URLSearchParams({
+            db: "pubmed",
+            WebEnv: webEnv,
+            query_key: queryKey,
+            retstart: start.toString(),
+            retmax: batchLimit.toString(),
+            retmode: "json",
+            ...(API_KEY && { api_key: API_KEY }),
+          });
+
+          // ESearch again to retrieve IDs from history
+          const batchUrl = `${EUTILS_BASE}/esearch.fcgi?${searchParams}`;
+          const batchResponse = await fetchWithRateLimit(batchUrl);
+
+          if (batchResponse.ok) {
+            const batchData = await batchResponse.json();
+            const batchIds = batchData.esearchresult?.idlist || [];
+            pmids.push(...batchIds);
+          }
+        }
+
         span.setAttribute('output.total_count', count);
-        span.setAttribute('output.pmid_count', (result.idlist || []).length);
+        span.setAttribute('output.pmid_count', pmids.length);
 
         return {
           count,
-          pmids: result.idlist || [],
-          webEnv: result.webenv,
-          queryKey: result.querykey,
+          pmids,
+          webEnv,
+          queryKey,
         };
       } catch (error) {
         console.error("Error searching PubMed:", error);

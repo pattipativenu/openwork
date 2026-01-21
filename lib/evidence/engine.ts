@@ -10,12 +10,12 @@
 // Initialize evidence system and validate configuration
 import './init';
 
-// Phoenix Observability Imports
+// Observability Imports (No-op)
 import {
   withRetrieverSpan,
   withRerankerSpan,
   withToolSpan,
-  PhoenixDocument
+  RetrievedDocument
 } from '../otel';
 
 // RAG SYSTEM IMPORTS

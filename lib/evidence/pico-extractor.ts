@@ -16,7 +16,7 @@
  * - O: Outcome
  */
 
-import { openai, OPENAI_MODELS } from "@/lib/openai";
+import { generateJSON, GEMINI_FLASH_MODEL } from "@/lib/gemini";
 import { expandMedicalAbbreviations } from "./medical-abbreviations";
 
 // ============================================================================
@@ -159,13 +159,13 @@ export function generateTagsFromQuery(query: string): any {
 // ============================================================================
 
 /**
- * Extract PICO components from a clinical query using OpenAI
+ * Extract PICO components from a clinical query using Gemini
  */
 export async function extractPICO(query: string): Promise<PICOExtraction> {
   const tags = generateTagsFromQuery(query);
 
-  if (!process.env.OPENAI_API_KEY) {
-    console.log("⚠️  No OpenAI API key, using pattern-based PICO extraction");
+  if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+    console.log("⚠️  No Gemini API key, using pattern-based PICO extraction");
     return {
       patient: extractPatientFromQuery(query),
       intervention: extractInterventionFromQuery(query),
@@ -191,15 +191,7 @@ Extract:
 Return ONLY valid JSON:
 {"patient": "...", "intervention": "...", "comparison": null or "...", "outcome": "...", "condition": "..."}`;
 
-    const completion = await openai.chat.completions.create({
-      model: OPENAI_MODELS.GENERAL,
-      messages: [{ role: "system", content: prompt }],
-      response_format: { type: "json_object" },
-      temperature: 0.1
-    });
-
-    const responseText = completion.choices[0].message.content || "{}";
-    const parsed = JSON.parse(responseText);
+    const parsed = await generateJSON<Partial<PICOExtraction>>(prompt, GEMINI_FLASH_MODEL);
 
     return {
       patient: parsed.patient || extractPatientFromQuery(query),

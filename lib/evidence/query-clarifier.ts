@@ -5,7 +5,7 @@
  * ClarifiedQuery objects that drive all downstream evidence retrieval.
  */
 
-import { openai, OPENAI_MODELS } from "@/lib/openai";
+import { generateJSON, GEMINI_FLASH_MODEL } from "@/lib/gemini";
 
 // ============================================================================
 // INTERFACES
@@ -91,43 +91,57 @@ export async function clarifyQuery(
   decision_tags?: string[],
   observations?: any // MedicalObservationSummary from observation-extractor
 ): Promise<QueryClarificationResult> {
-  console.log('🔍 Query Clarification: Starting structured extraction...');
+  console.log('🔍 Query Clarification: Starting structured extraction with Gemini...');
 
   try {
-    // Check if API key is available
-    if (!process.env.OPENAI_API_KEY) {
-      console.warn('⚠️  No OpenAI API Key - using pattern-based fallback');
-      return patternBasedClarification(query, expandedQuery, disease_tags, decision_tags, observations);
-    }
-
     // Use LLM to extract structured query
     const prompt = buildClarificationPrompt(query, expandedQuery, disease_tags, decision_tags);
 
-    const completion = await openai.chat.completions.create({
-      model: OPENAI_MODELS.GENERAL,
-      messages: [{ role: "system", content: prompt }],
-      response_format: { type: "json_object" },
-      temperature: 0.1
-    });
+    // We expect the LLM to return a JSON object with the structure of ClarifiedQuery
+    // but the prompt returns a wrapper object with keys like "clinical_question", etc.
+    // which effectively matches ClarifiedQuery structure directly.
+    const parsed = await generateJSON<ClarifiedQuery>(prompt, GEMINI_FLASH_MODEL);
 
-    const response = completion.choices[0].message.content || "{}";
-
-    // Parse JSON response key
-    const parsed = parseAndValidateClarification(response, query);
+    // Validate and fill defaults
+    const validated = validateClarifiedQuery(parsed);
 
     console.log('✅ Query Clarification: Structured extraction complete');
-    console.log(`   Decision type: ${parsed.clarified.decision_type}`);
-    console.log(`   Guideline bodies: ${parsed.clarified.guideline_bodies.join(', ') || 'none'}`);
-    console.log(`   Key drugs: ${parsed.clarified.key_drugs.join(', ') || 'none'}`);
-    console.log(`   Confidence: ${Math.round(parsed.clarified.confidence * 100)}%`);
+    console.log(`   Decision type: ${validated.decision_type}`);
+    console.log(`   Guideline bodies: ${validated.guideline_bodies.join(', ') || 'none'}`);
+    console.log(`   Key drugs: ${validated.key_drugs.join(', ') || 'none'}`);
+    console.log(`   Confidence: ${Math.round(validated.confidence * 100)}%`);
 
-    return parsed;
+    return {
+      clarified: validated,
+      validation_warnings: [],
+      fallback_used: false
+    };
 
   } catch (error: any) {
     console.error('❌ Query Clarification failed:', error.message);
     console.log('⚠️  Falling back to pattern-based extraction');
-    return patternBasedClarification(query, expandedQuery, disease_tags, decision_tags);
+    return patternBasedClarification(query, expandedQuery, disease_tags, decision_tags, observations);
   }
+}
+
+/**
+ * Helper to validate and clean the extracted query
+ */
+function validateClarifiedQuery(parsed: any): ClarifiedQuery {
+  return {
+    clinical_question: parsed.clinical_question || "",
+    population: parsed.population || "",
+    intervention_or_index: parsed.intervention_or_index || "",
+    comparator: parsed.comparator || null,
+    outcomes: Array.isArray(parsed.outcomes) ? parsed.outcomes : [],
+    decision_type: ['diagnosis', 'treatment', 'guideline', 'prognosis', 'workup'].includes(parsed.decision_type) ? parsed.decision_type : 'treatment',
+    guideline_bodies: Array.isArray(parsed.guideline_bodies) ? parsed.guideline_bodies : [],
+    key_drugs: Array.isArray(parsed.key_drugs) ? parsed.key_drugs : [],
+    key_biomarkers: Array.isArray(parsed.key_biomarkers) ? parsed.key_biomarkers : [],
+    has_medical_observations: !!parsed.has_medical_observations,
+    timeframe: parsed.timeframe || undefined,
+    confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.8
+  };
 }
 
 /**

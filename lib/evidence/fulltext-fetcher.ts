@@ -7,7 +7,7 @@
  * 2. PMC ID → NCBI E-Utilities (fetches full-text from PubMed Central)
  * 3. Fallback → Use existing abstract from PubMed
  * 
- * Integrated with Phoenix OpenTelemetry for observability.
+ * Integrated with OpenTelemetry for observability.
  */
 
 import { withToolSpan } from '@/lib/otel';

@@ -93,30 +93,4 @@ export function formatFilesForPrompt(files: ProcessedFile[]): string {
   return formatted;
 }
 
-/**
- * Prepare files for OpenAI Vision API
- * Returns array of message content parts
- */
-export function prepareFilesForOpenAI(files: ProcessedFile[]): any[] {
-  const parts: any[] = [];
 
-  for (const file of files) {
-    if (file.base64 && file.mimeType) {
-      // Add image url
-      parts.push({
-        type: "image_url",
-        image_url: {
-          url: `data:${file.mimeType};base64,${file.base64}`
-        }
-      });
-    } else if (file.content) {
-      // Add text content
-      parts.push({
-        type: "text",
-        text: `\n\n--- Content from ${file.name} ---\n${file.content}\n--- End of ${file.name} ---\n`,
-      });
-    }
-  }
-
-  return parts;
-}

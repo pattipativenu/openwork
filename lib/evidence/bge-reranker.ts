@@ -5,7 +5,7 @@
  * This is a Cross-Encoder approach which is more accurate than Bi-Encoder (cosine similarity)
  * because it sees the query and document together in the attention mechanism.
  * 
- * Integrated with Phoenix OpenTelemetry for full observability.
+ * Integrated with OpenTelemetry for full observability.
  * 
  * Model: Xenova/bge-reranker-base (public, no auth required)
  * Runtime: @xenova/transformers (ONNX Runtime)
@@ -403,7 +403,7 @@ export async function rerankWithBGE<T extends { title: string; abstract?: string
     // EXECUTION CONFIRMATION: Entering main processing
     console.log(`[BGEReranker] ✅ EXECUTION CONFIRMED: Processing ${articles.length} articles with BGE Cross-Encoder`);
 
-    // Wrap with Phoenix Tool Span for observability
+    // Wrap with Tool Span for observability
     return withToolSpan<BGERankedArticle<T>[]>(
         'bge-reranker',
         'rerank',
@@ -411,7 +411,7 @@ export async function rerankWithBGE<T extends { title: string; abstract?: string
             const startTime = Date.now();
             const articlesToRerank = articles.slice(0, topK);
 
-            // Set span attributes for Phoenix dashboard
+            // Set span attributes for dashboard
             span.setAttribute('reranker.model', PRIMARY_MODEL);
             span.setAttribute('reranker.input_count', articlesToRerank.length);
             span.setAttribute('reranker.query', query.substring(0, 200));
@@ -669,7 +669,7 @@ export async function rerankWithBGE<T extends { title: string; abstract?: string
                     }
                 }
 
-                // Calculate metrics for Phoenix
+                // Calculate metrics
                 const avgScore = filteredArticles.length > 0
                     ? filteredArticles.reduce((sum, item) => sum + item.score, 0) / filteredArticles.length
                     : 0;

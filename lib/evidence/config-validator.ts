@@ -10,7 +10,7 @@ export interface ConfigValidationResult {
   warnings: string[];
   errors: string[];
   config: {
-    openaiApiKey: boolean;
+    googleGenerativeAiApiKey: boolean;
     ncbiApiKey: boolean;
     tavilyApiKey: boolean;
     dailyMedApiKey: boolean;
@@ -28,9 +28,9 @@ export function validateEvidenceConfig(): ConfigValidationResult {
   const errors: string[] = [];
 
   // Check required configuration
-  const openaiApiKey = !!process.env.OPENAI_API_KEY;
-  if (!openaiApiKey) {
-    errors.push('OPENAI_API_KEY is required but not set');
+  const googleGenerativeAiApiKey = !!process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  if (!googleGenerativeAiApiKey) {
+    errors.push('GOOGLE_GENERATIVE_AI_API_KEY is required but not set');
   }
 
   // Check optional but recommended configuration
@@ -66,7 +66,7 @@ export function validateEvidenceConfig(): ConfigValidationResult {
     warnings,
     errors,
     config: {
-      openaiApiKey,
+      googleGenerativeAiApiKey,
       ncbiApiKey,
       tavilyApiKey,
       dailyMedApiKey,
@@ -85,7 +85,7 @@ export function logConfigValidation(result: ConfigValidationResult): void {
 
   // Log configuration status
   console.log('Configuration Status:');
-  console.log(`  OpenAI API Key: ${result.config.openaiApiKey ? '✅' : '❌'}`);
+  console.log(`  Google Gemini API Key: ${result.config.googleGenerativeAiApiKey ? '✅' : '❌'}`);
   console.log(`  NCBI API Key: ${result.config.ncbiApiKey ? '✅' : '⚠️  (optional)'}`);
   console.log(`  Tavily API Key: ${result.config.tavilyApiKey ? '✅' : '⚠️  (optional)'}`);
   console.log(`  DailyMed API Key: ${result.config.dailyMedApiKey ? '✅' : '⚠️  (optional)'}`);

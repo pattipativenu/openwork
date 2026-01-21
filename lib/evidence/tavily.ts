@@ -10,7 +10,7 @@
  * - Fallback only when internal evidence is insufficient
  * - Filters results to medical sources only
  * - Provides answer + citations for evidence synthesis
- * - OpenTelemetry tracing for observability (Arize Phoenix)
+ * - OpenTelemetry tracing for observability
  */
 
 import { withToolSpan } from '@/lib/otel';
