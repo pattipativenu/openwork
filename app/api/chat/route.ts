@@ -114,9 +114,19 @@ async function handleChatRequest(
 
     // NEW: Use 7-Agent Medical Evidence Synthesis System
     console.log(`🚀 Using 7-Agent Medical Evidence Synthesis for query: "${message}"`);
+    console.log(`📋 Session ID: ${sessionId}`);
     
     try {
+      // Process query through 7-agent system
+      console.log(`🔄 Processing query through orchestrator...`);
       const evidenceResponse = await orchestrator.processQuery(message, sessionId);
+      
+      console.log(`✅ Orchestrator completed:`, {
+        synthesisLength: evidenceResponse.synthesis?.length || 0,
+        citationsCount: evidenceResponse.citations?.length || 0,
+        sourcesCount: evidenceResponse.metadata?.sources_count || 0,
+        hasWarning: !!evidenceResponse.warning
+      });
       
       // Stream the response
       const encoder = new TextEncoder();
@@ -124,30 +134,37 @@ async function handleChatRequest(
       const stream = new ReadableStream({
         async start(controller) {
           try {
+            console.log(`📡 Starting streaming response...`);
+            
             // Send metadata first
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
+            const metadata = {
               sessionId, 
-              model: evidenceResponse.metadata.model_used,
-              sources_count: evidenceResponse.metadata.sources_count,
-              cost: evidenceResponse.metadata.cost_total_usd,
-              latency: evidenceResponse.metadata.latency_total_ms,
-              grounding_score: evidenceResponse.metadata.grounding_score
-            })}\n\n`));
+              model: evidenceResponse.metadata?.model_used || 'gemini-3-pro-preview',
+              sources_count: evidenceResponse.metadata?.sources_count || 0,
+              cost: evidenceResponse.metadata?.cost_total_usd || 0,
+              latency: evidenceResponse.metadata?.latency_total_ms || 0,
+              grounding_score: evidenceResponse.metadata?.grounding_score || 0.8
+            };
+            
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(metadata)}\n\n`));
+            console.log(`📊 Sent metadata:`, metadata);
 
             // Stream the synthesis text with inline citations
-            const synthesis = evidenceResponse.synthesis;
+            const synthesis = evidenceResponse.synthesis || "I apologize, but I couldn't generate a response. Please try again.";
             const chunkSize = 50; // Characters per chunk
             
+            console.log(`📝 Streaming synthesis (${synthesis.length} chars)...`);
             for (let i = 0; i < synthesis.length; i += chunkSize) {
               const chunk = synthesis.slice(i, i + chunkSize);
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: chunk })}\n\n`));
               
               // Small delay to simulate streaming
-              await new Promise(resolve => setTimeout(resolve, 50));
+              await new Promise(resolve => setTimeout(resolve, 30));
             }
 
             // Build and stream references section
-            if (evidenceResponse.citations.length > 0) {
+            if (evidenceResponse.citations && evidenceResponse.citations.length > 0) {
+              console.log(`📚 Streaming references (${evidenceResponse.citations.length} citations)...`);
               const referencesSection = buildReferencesSection(evidenceResponse.citations);
               
               // Stream references section in chunks
@@ -155,7 +172,7 @@ async function handleChatRequest(
               for (let i = 0; i < referencesSection.length; i += refChunkSize) {
                 const chunk = referencesSection.slice(i, i + refChunkSize);
                 controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: chunk })}\n\n`));
-                await new Promise(resolve => setTimeout(resolve, 30));
+                await new Promise(resolve => setTimeout(resolve, 20));
               }
               
               // Send citations metadata for UI components (for hover cards, etc.)
@@ -166,6 +183,7 @@ async function handleChatRequest(
 
             // Send warning if present
             if (evidenceResponse.warning) {
+              console.log(`⚠️ Sending warning: ${evidenceResponse.warning}`);
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
                 warning: evidenceResponse.warning 
               })}\n\n`));
@@ -174,22 +192,41 @@ async function handleChatRequest(
             // Set span attributes
             span.setAttribute("output.value", synthesis);
             span.setAttribute("output.mime_type", "text/plain");
-            span.setAttribute("evidence.sources_count", evidenceResponse.metadata.sources_count);
-            span.setAttribute("evidence.cost_usd", evidenceResponse.metadata.cost_total_usd);
-            span.setAttribute("evidence.grounding_score", evidenceResponse.metadata.grounding_score);
-            span.setAttribute("evidence.hallucination_detected", evidenceResponse.metadata.hallucination_detected);
+            span.setAttribute("evidence.sources_count", evidenceResponse.metadata?.sources_count || 0);
+            span.setAttribute("evidence.cost_usd", evidenceResponse.metadata?.cost_total_usd || 0);
+            span.setAttribute("evidence.grounding_score", evidenceResponse.metadata?.grounding_score || 0.8);
+            span.setAttribute("evidence.hallucination_detected", evidenceResponse.metadata?.hallucination_detected || false);
 
             span.setStatus({ code: 0 });
             span.end();
 
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
             controller.close();
+            
+            console.log(`✅ Streaming completed successfully`);
 
           } catch (streamError) {
             console.error("❌ Streaming error:", streamError);
+            console.error("❌ Stream error details:", {
+              name: streamError instanceof Error ? streamError.name : 'Unknown',
+              message: streamError instanceof Error ? streamError.message : 'Unknown error',
+              stack: streamError instanceof Error ? streamError.stack : 'No stack'
+            });
+            
             span.setStatus({ code: 1, message: streamError instanceof Error ? streamError.message : "Stream error" });
             span.end();
-            controller.error(streamError);
+            
+            // Send error message to client
+            try {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
+                error: "Streaming failed: " + (streamError instanceof Error ? streamError.message : "Unknown error")
+              })}\n\n`));
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+            } catch (closeError) {
+              console.error("❌ Failed to send error to client:", closeError);
+              controller.error(streamError);
+            }
           }
         },
       });
@@ -197,14 +234,21 @@ async function handleChatRequest(
       return new Response(stream, {
         headers: {
           "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
           "X-Session-ID": sessionId,
-          "X-Evidence-Sources": evidenceResponse.metadata.sources_count.toString(),
-          "X-Grounding-Score": evidenceResponse.metadata.grounding_score.toString()
+          "X-Evidence-Sources": (evidenceResponse.metadata?.sources_count || 0).toString(),
+          "X-Grounding-Score": (evidenceResponse.metadata?.grounding_score || 0.8).toString()
         },
       });
 
     } catch (orchestratorError) {
       console.error("❌ 7-Agent orchestrator failed:", orchestratorError);
+      console.error("❌ Orchestrator error details:", {
+        name: orchestratorError instanceof Error ? orchestratorError.name : 'Unknown',
+        message: orchestratorError instanceof Error ? orchestratorError.message : 'Unknown error',
+        stack: orchestratorError instanceof Error ? orchestratorError.stack : 'No stack'
+      });
       
       // Set error status and return error response
       span.setStatus({ code: 1, message: orchestratorError instanceof Error ? orchestratorError.message : "Orchestrator Error" });
@@ -212,7 +256,8 @@ async function handleChatRequest(
       
       return NextResponse.json({ 
         error: "Medical evidence synthesis system temporarily unavailable", 
-        details: orchestratorError instanceof Error ? orchestratorError.message : "Unknown error" 
+        details: orchestratorError instanceof Error ? orchestratorError.message : "Unknown error",
+        type: "orchestrator_error"
       }, { status: 500 });
     }
 

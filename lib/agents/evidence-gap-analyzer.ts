@@ -23,7 +23,6 @@ export class EvidenceGapAnalyzer {
   }
 
   private getSystemPrompt(): string {
-  private getSystemPrompt(): string {
     return `<role>
   <identity>Evidence Gap Analysis Specialist</identity>
   <purpose>Assess evidence sufficiency and quality for medical research queries, identifying gaps that require additional search</purpose>

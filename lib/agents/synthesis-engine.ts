@@ -313,9 +313,6 @@ Strong evidence from multiple guidelines and systematic reviews supports metform
   <requirement>ALWAYS end with exactly 3 follow-up questions related to original query</requirement>
   <requirement>ALWAYS acknowledge contradictory evidence when present</requirement>
   <requirement>ALWAYS use actual article titles, never generic source names</requirement>
-</critical_requirements>`;
-  <requirement>ALWAYS include publication years for temporal context</requirement>
-  <requirement>ALWAYS use evidence-only language, never directive language</requirement>
 </critical_requirements>
 
 <quality_assurance>

@@ -3,7 +3,7 @@
  * Firestore Vector Search for Indian Clinical Practice Guidelines
  */
 
-import { Firestore } from '@google/cloud-firestore';
+import { Firestore } from '@google-cloud/firestore';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { TraceContext } from '../types';
 import { logRetrieval } from '../../observability/arize-client';

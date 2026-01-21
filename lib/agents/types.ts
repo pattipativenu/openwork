@@ -128,6 +128,7 @@ export interface SynthesisResult {
   };
   cost: number;
   model_used: string;
+  warning?: string;
 }
 
 // Agent 7: Verification Output

@@ -70,7 +70,7 @@ export class FullTextFetcher {
     
     try {
       // Step 1: Comprehensive identifier analysis
-      const identifiers = this.extractAllIdentifiers(article);
+      const identifiers = this.extractIdentifiers(article);
       
       // Step 2: Multi-tier retrieval attempt
       let fullTextContent = null;
@@ -199,6 +199,8 @@ export class FullTextFetcher {
       return null;
     }
   }
+
+  private extractIdentifiers(article: any): { pmcid?: string; pmid?: string; doi?: string } {
     const identifiers: { pmcid?: string; pmid?: string; doi?: string } = {};
     
     // Extract PMCID
@@ -505,6 +507,8 @@ export class FullTextFetcher {
       selection_criteria: 'Fallback processing due to retrieval failure'
     };
   }
+
+  private async fetchPMCFullText(pmcid: string): Promise<FullTextSections | null> {
     const url = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi';
     const params = new URLSearchParams({
       db: 'pmc',
