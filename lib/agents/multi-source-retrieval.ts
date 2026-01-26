@@ -50,13 +50,15 @@ export class MultiSourceRetrievalCoordinator {
 
   async retrieveAll(
     searchStrategy: QueryAnalysis,
-    traceContext: TraceContext
+    traceContext: TraceContext,
+    originalQuery?: string
   ): Promise<RetrievalResults> {
     const startTime = Date.now();
     const tasks: Promise<any>[] = [];
     const sources = searchStrategy.requires_sources;
 
     console.log(`🔍 Starting comprehensive evidence retrieval from 15+ sources...`);
+    console.log(`📋 Original query: "${originalQuery || 'Not provided'}"`);
 
     // 1. Guidelines (Firestore - Indian guidelines)
     if (sources.guidelines) {
@@ -70,7 +72,7 @@ export class MultiSourceRetrievalCoordinator {
       tasks.push(Promise.resolve({ type: 'guidelines', results: [] }));
     }
 
-    // 2. PubMed (Evidence Engine - Advanced with MeSH)
+    // 2. PubMed (Evidence Engine - Advanced with MeSH + Medical Source Bible)
     if (sources.pubmed) {
       tasks.push(
         comprehensivePubMedSearch(
@@ -83,7 +85,7 @@ export class MultiSourceRetrievalCoordinator {
       tasks.push(Promise.resolve({ type: 'pubmed', results: [] }));
     }
 
-    // 3. DailyMed (Evidence Engine - Advanced SPL parsing)
+    // 3. DailyMed (Evidence Engine - Advanced SPL parsing + Medical Source Bible)
     if (sources.dailymed && searchStrategy.entities.drugs.length > 0) {
       tasks.push(
         comprehensiveDailyMedSearch(
@@ -200,8 +202,9 @@ export class MultiSourceRetrievalCoordinator {
   async searchTavily(
     query: string,
     existingUrls: Set<string>,
-    traceContext: TraceContext
+    traceContext: TraceContext,
+    originalQuery?: string
   ): Promise<any[]> {
-    return this.tavily.search(query, existingUrls, traceContext);
+    return this.tavily.search(query, existingUrls, traceContext, originalQuery);
   }
 }

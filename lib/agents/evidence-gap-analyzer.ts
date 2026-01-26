@@ -375,7 +375,7 @@ Output JSON:`;
         );
 
         try {
-          const tavilyResults = await retriever.searchTavily(tavilyQuery, existingUrls, traceContext);
+          const tavilyResults = await retriever.searchTavily(tavilyQuery, existingUrls, traceContext, query);
           
           if (tavilyResults.length > 0) {
             console.log(`✅ Tavily found ${tavilyResults.length} additional sources`);

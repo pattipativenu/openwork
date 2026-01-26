@@ -81,7 +81,7 @@ export class MedicalEvidenceOrchestrator {
       // AGENT 2: Multi-Source Retrieval
       console.log(`\n🔍 AGENT 2: Multi-Source Retrieval`);
       const retrievalStart = Date.now();
-      const rawResults = await this.multiSourceRetrieval.retrieveAll(searchStrategy, traceContext);
+      const rawResults = await this.multiSourceRetrieval.retrieveAll(searchStrategy, traceContext, query);
       agentLatencies.multi_source_retrieval = Date.now() - retrievalStart;
 
       const totalDocuments = Object.values(rawResults).reduce((sum, arr) => sum + arr.length, 0);

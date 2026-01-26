@@ -1,12 +1,16 @@
 /**
  * Sub-Agent 2.4: DailyMed Retriever
  * Fetches FDA drug labels (SPL format)
- * Only triggered if requires_sources.dailymed == true
+ * ENHANCED: Now uses comprehensive evidence engine + Medical Source Bible drug routing
  */
 
 import { TraceContext } from '../types';
 import { logRetrieval } from '../../observability/arize-client';
 import { DAILYMED_RETRIEVER_SYSTEM_PROMPT } from '../system-prompts/dailymed-retriever-prompt';
+// EVIDENCE ENGINE INTEGRATION
+import { comprehensiveDailyMedSearch } from '../../evidence/dailymed';
+// MEDICAL SOURCE BIBLE INTEGRATION
+import { routeQueryToSpecialties } from '../../../medical-source-bible';
 
 export interface DailyMedSearchResult {
   setid: string;
@@ -14,6 +18,8 @@ export interface DailyMedSearchResult {
   title: string;
   published: string;
   sections: Record<string, string>;
+  specialty_relevance?: string[];
+  is_recent_update?: boolean;
 }
 
 export class DailyMedRetriever {
@@ -25,17 +31,27 @@ export class DailyMedRetriever {
 
   async search(
     drugNames: string[],
-    traceContext: TraceContext
+    traceContext: TraceContext,
+    originalQuery?: string
   ): Promise<DailyMedSearchResult[]> {
     const startTime = Date.now();
     
     try {
-      const results: DailyMedSearchResult[] = [];
+      console.log(`💊 DailyMed Retriever: Enhanced search with Medical Source Bible integration`);
+      
+      // STEP 1: Route query to medical specialties for drug context
+      const relevantSpecialties = originalQuery ? routeQueryToSpecialties(originalQuery) : [];
+      console.log(`📋 Drug context specialties: ${relevantSpecialties.join(', ') || 'general'}`);
 
-      for (const drug of drugNames) {
-        const drugResults = await this.searchDrug(drug);
-        results.push(...drugResults.slice(0, 2)); // Max 2 per drug
-      }
+      // STEP 2: Use comprehensive evidence engine for drug search
+      const searchQuery = drugNames.join(' OR ');
+      const result = await comprehensiveDailyMedSearch(searchQuery);
+      
+      // STEP 3: Enhance results with Medical Source Bible metadata
+      const enhancedResults = this.enhanceWithSourceBible(result.drugs, relevantSpecialties, drugNames);
+      
+      // STEP 4: Apply intelligent filtering for drug information
+      const filteredResults = this.applyDrugFiltering(enhancedResults);
 
       const latency = Date.now() - startTime;
 
@@ -43,19 +59,23 @@ export class DailyMedRetriever {
         'dailymed',
         traceContext,
         drugNames.join(', '),
-        results.length,
+        filteredResults.length,
         latency,
         {
           drugs_searched: drugNames.length,
-          labels_found: results.length
+          specialties_detected: relevantSpecialties,
+          total_results: result.drugs.length,
+          after_filtering: filteredResults.length,
+          recent_updates: filteredResults.filter(r => r.is_recent_update).length,
+          labels_found: filteredResults.length
         }
       );
 
-      console.log(`💊 DailyMed search: ${results.length} drug labels found`);
-      return results;
+      console.log(`✅ DailyMed Retriever: ${filteredResults.length} drug labels (${filteredResults.filter(r => r.is_recent_update).length} recent updates)`);
+      return filteredResults;
 
     } catch (error) {
-      console.error('❌ DailyMed search failed:', error);
+      console.error('❌ DailyMed Retriever failed:', error);
       
       await logRetrieval(
         'dailymed',
@@ -70,80 +90,68 @@ export class DailyMedRetriever {
     }
   }
 
-  private async searchDrug(drugName: string): Promise<DailyMedSearchResult[]> {
-    const url = 'https://dailymed.nlm.nih.gov/dailymed/services/v2/spls.json';
-    const params = new URLSearchParams({
-      drug_name: drugName,
-      published_after: '2020-01-01' // Recent labels only
-    });
+  private enhanceWithSourceBible(drugs: any[], specialties: string[], searchedDrugs: string[]): DailyMedSearchResult[] {
+    return drugs.map(drug => {
+      // Check if this is a recent update (2023+)
+      const pubYear = new Date(drug.publishedDate || '2000-01-01').getFullYear();
+      const currentYear = new Date().getFullYear();
+      const isRecentUpdate = pubYear >= currentYear - 2; // 2023+ if current year is 2025
 
-    try {
-      const response = await fetch(`${url}?${params}`);
+      // Extract sections from the drug object
+      const sections: Record<string, string> = {};
       
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
+      if (drug.indications) sections.indications = drug.indications;
+      if (drug.contraindications) sections.contraindications = drug.contraindications;
+      if (drug.warnings) sections.warnings = drug.warnings;
+      if (drug.dosage) sections.dosage = drug.dosage;
+      if (drug.adverseReactions) sections.adverse_reactions = drug.adverseReactions;
+      if (drug.drugInteractions) sections.drug_interactions = drug.drugInteractions;
+      if (drug.clinicalPharmacology) sections.clinical_pharmacology = drug.clinicalPharmacology;
+      if (drug.howSupplied) sections.how_supplied = drug.howSupplied;
 
-      const data = await response.json();
-      const results: DailyMedSearchResult[] = [];
-
-      for (const spl of (data.data || []).slice(0, 2)) { // Max 2 per drug
-        const sections = await this.fetchSPLSections(spl.setid);
-        
-        results.push({
-          setid: spl.setid,
-          drug_name: drugName,
-          title: spl.title || '',
-          published: spl.published || '',
-          sections
-        });
-      }
-
-      return results;
-
-    } catch (error) {
-      console.error(`❌ DailyMed search failed for ${drugName}:`, error);
-      return [];
-    }
+      return {
+        setid: drug.setId,
+        drug_name: drug.genericName || drug.brandName || searchedDrugs[0] || 'Unknown',
+        title: drug.title,
+        published: drug.publishedDate,
+        sections,
+        specialty_relevance: specialties,
+        is_recent_update: isRecentUpdate
+      };
+    });
   }
 
-  private async fetchSPLSections(setid: string): Promise<Record<string, string>> {
-    const url = `https://dailymed.nlm.nih.gov/dailymed/services/v2/spls/${setid}.xml`;
-
-    try {
-      const response = await fetch(url);
-      const xmlContent = await response.text();
-
-      const sections: Record<string, string> = {};
-
-      // Extract key sections using LOINC codes (simplified approach)
-      const sectionMappings = {
-        '34067-9': 'indications',
-        '34068-7': 'dosage',
-        '43685-7': 'warnings',
-        '34084-4': 'adverse_reactions',
-        '34073-7': 'drug_interactions',
-        '34090-1': 'clinical_pharmacology'
-      };
-
-      for (const [code, name] of Object.entries(sectionMappings)) {
-        const regex = new RegExp(`code="${code}"[^>]*>(.*?)</[^>]*>`, 'gs');
-        const match = xmlContent.match(regex);
-        
-        if (match && match[0]) {
-          // Extract text content (remove XML tags)
-          const textContent = match[0].replace(/<[^>]*>/g, ' ').trim();
-          if (textContent.length > 20) {
-            sections[name] = textContent.substring(0, 2000); // Limit length
-          }
-        }
-      }
-
-      return sections;
-
-    } catch (error) {
-      console.error(`❌ SPL fetch failed for ${setid}:`, error);
-      return {};
-    }
+  private applyDrugFiltering(results: DailyMedSearchResult[]): DailyMedSearchResult[] {
+    // Sort by recency and completeness
+    const sorted = results.sort((a, b) => {
+      // First priority: Recent updates
+      if (a.is_recent_update && !b.is_recent_update) return -1;
+      if (!a.is_recent_update && b.is_recent_update) return 1;
+      
+      // Second priority: Number of sections (more complete information)
+      const sectionsA = Object.keys(a.sections).length;
+      const sectionsB = Object.keys(b.sections).length;
+      if (sectionsA !== sectionsB) return sectionsB - sectionsA;
+      
+      // Third priority: Publication date (more recent first)
+      const dateA = new Date(a.published || '1900-01-01').getTime();
+      const dateB = new Date(b.published || '1900-01-01').getTime();
+      return dateB - dateA;
+    });
+    
+    // Apply limits: prioritize recent updates and complete information
+    const recentUpdates = sorted.filter(r => r.is_recent_update).slice(0, 8);
+    const olderLabels = sorted.filter(r => !r.is_recent_update).slice(0, 4);
+    
+    // Combine and deduplicate by setid
+    const combined = [...recentUpdates, ...olderLabels];
+    const seen = new Set<string>();
+    const deduped = combined.filter(drug => {
+      if (seen.has(drug.setid)) return false;
+      seen.add(drug.setid);
+      return true;
+    });
+    
+    return deduped.slice(0, 12); // Final limit
   }
 }
