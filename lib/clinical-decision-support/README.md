@@ -262,4 +262,4 @@ lib/clinical-decision-support/
 
 ## License
 
-Part of MedGuidance AI - Evidence-based clinical decision support system.
+Part of OpenWork AI - Evidence-based clinical decision support system.

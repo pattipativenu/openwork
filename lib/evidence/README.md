@@ -1,4 +1,4 @@
-# MedGuidance AI Evidence Engine
+# OpenWork AI Evidence Engine
 
 ## Overview
 The Evidence Engine is the core system that retrieves and integrates clinical evidence from multiple open, legitimate sources to support evidence-based medical decision-making.

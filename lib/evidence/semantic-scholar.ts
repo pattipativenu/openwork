@@ -37,7 +37,7 @@ async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
     try {
       const response = await fetch(url, {
         headers: {
-          'User-Agent': 'MedGuidance-AI (mailto:wenuupattipati@gmail.com)',
+          'User-Agent': 'OpenWork-AI (mailto:wenuupattipati@gmail.com)',
         },
       });
       

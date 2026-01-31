@@ -11,11 +11,20 @@ import { logAgent, logHallucination } from '../observability/arize-client';
 export class VerificationGate {
   private genAI: GoogleGenerativeAI;
   private model: any;
+  private fallbackModel: any;
+  private consecutiveFailures: number = 0;
+  private maxConsecutiveFailures: number = 3;
 
   constructor(apiKey: string) {
     this.genAI = new GoogleGenerativeAI(apiKey);
     this.model = this.genAI.getGenerativeModel({ 
-      model: 'gemini-3.0-flash-thinking-exp-01-21',
+      model: process.env.GEMINI_FLASH_MODEL || 'gemini-3-flash-preview',
+      systemInstruction: this.getSystemPrompt()
+    });
+    
+    // Fallback to Gemini 3.0 Pro if Flash is overloaded
+    this.fallbackModel = this.genAI.getGenerativeModel({
+      model: 'gemini-3-pro-preview',
       systemInstruction: this.getSystemPrompt()
     });
   }
@@ -269,6 +278,21 @@ export class VerificationGate {
     const startTime = Date.now();
 
     try {
+      // Circuit breaker: Skip verification if too many consecutive failures
+      if (this.consecutiveFailures >= this.maxConsecutiveFailures) {
+        console.log('⚠️ Verification circuit breaker activated - skipping verification due to consecutive failures');
+        return {
+          data: synthesis,
+          metadata: {
+            agent: 'verification_gate',
+            latency: Date.now() - startTime,
+            model_used: 'skipped',
+            cost: 0
+          },
+          warning: '⚠️ Verification skipped due to model overload - please verify claims manually'
+        };
+      }
+
       // Extract claims from synthesis
       const claims = this.extractClaims(synthesis.synthesis);
       
@@ -284,13 +308,47 @@ export class VerificationGate {
         passed: false
       };
 
-      // Parse citations from synthesis
-      const citedClaimPattern = /([^.!?]+)\s*\[(\d+(?:,\s*\d+)*)\]/g;
-      const citedClaims: Array<[string, string]> = [];
-      let match;
+      // Parse citations from synthesis - handle both [[N]](URL) and [N] patterns
+      const citationPatterns = [
+        /\[\[(\d+)\]\]\([^)]+\)/g,  // [[N]](URL) format (primary)
+        /\[(\d+)\]/g                // [N] format (fallback)
+      ];
       
-      while ((match = citedClaimPattern.exec(synthesis.synthesis)) !== null) {
-        citedClaims.push([match[1], match[2]]);
+      const citedClaims: Array<[string, string]> = [];
+      const citedNumbers = new Set<number>();
+      
+      // Extract citations using both patterns
+      for (const pattern of citationPatterns) {
+        let match;
+        while ((match = pattern.exec(synthesis.synthesis)) !== null) {
+          const citationNumber = parseInt(match[1]);
+          citedNumbers.add(citationNumber);
+        }
+      }
+      
+      // Find claims with citations by looking for sentences containing citation patterns
+      const sentences = synthesis.synthesis.split(/(?<=[.!?])\s+/);
+      for (const sentence of sentences) {
+        const hasCitation = citationPatterns.some(pattern => {
+          pattern.lastIndex = 0; // Reset regex
+          return pattern.test(sentence);
+        });
+        
+        if (hasCitation) {
+          // Extract citation numbers from this sentence
+          const sentenceCitations: number[] = [];
+          for (const pattern of citationPatterns) {
+            pattern.lastIndex = 0; // Reset regex
+            let match;
+            while ((match = pattern.exec(sentence)) !== null) {
+              sentenceCitations.push(parseInt(match[1]));
+            }
+          }
+          
+          if (sentenceCitations.length > 0) {
+            citedClaims.push([sentence.trim(), sentenceCitations.join(',')]);
+          }
+        }
       }
 
       validationResults.cited_claims = citedClaims.length;
@@ -306,13 +364,7 @@ export class VerificationGate {
         }
       }
 
-      // Validate citations exist
-      const citedNumbers = new Set<number>();
-      for (const [, numbersStr] of citedClaims) {
-        const numbers = numbersStr.split(',').map(n => parseInt(n.trim()));
-        numbers.forEach(n => citedNumbers.add(n));
-      }
-
+      // Validate citations exist in evidence pack
       const validNumbers = new Set(synthesis.citations.map(c => c.number));
       const invalidNumbers = Array.from(citedNumbers).filter(n => !validNumbers.has(n));
       validationResults.invalid_citations = invalidNumbers;
@@ -367,7 +419,7 @@ export class VerificationGate {
           data: validationResults,
           latency_ms: latency
         },
-        'gemini-3.0-flash-thinking'
+        'gemini-3-flash-preview'
       );
 
       // Log hallucination detection
@@ -455,8 +507,14 @@ export class VerificationGate {
   private async checkGrounding(claim: string, citedSources: any[]): Promise<boolean> {
     if (citedSources.length === 0) return false;
 
-    // Combine source texts
-    const sourceTexts = citedSources.map(source => source.text);
+    // Combine source texts (limit for performance)
+    const sourceTexts = citedSources
+      .slice(0, 3) // Limit to top 3 sources
+      .map(source => source.text?.slice(0, 500) || '') // Limit text length
+      .filter(text => text.length > 0);
+    
+    if (sourceTexts.length === 0) return false;
+    
     const combinedSources = sourceTexts.join('\n\n');
 
     // Use Gemini for semantic entailment check
@@ -470,14 +528,49 @@ ${combinedSources}
 Answer ONLY 'YES' or 'NO'. If the claim is a reasonable inference from the evidence, answer YES. If the claim contradicts or goes beyond the evidence, answer NO.`;
 
     try {
-      const response = await this.model.generateContent(prompt, {
-        generationConfig: { temperature: 0 }
-      });
+      let response;
+      let modelUsed = 'gemini-3-flash-preview';
+      
+      // Add timeout wrapper (15 seconds)
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Verification timeout')), 15000)
+      );
+      
+      try {
+        // Try Gemini 3.0 Flash first with timeout
+        const primaryPromise = this.model.generateContent(prompt, {
+          generationConfig: { temperature: 0 }
+        });
+        
+        response = await Promise.race([primaryPromise, timeoutPromise]);
+      } catch (primaryError) {
+        // If Gemini 3.0 Flash fails, try Pro with timeout
+        if (primaryError instanceof Error && (primaryError.message.includes('overloaded') || primaryError.message.includes('timeout'))) {
+          console.log('⚠️ Gemini 3.0 Flash overloaded/timeout for verification, trying 3.0 Pro...');
+          modelUsed = 'gemini-3-pro-preview';
+          
+          try {
+            const fallbackPromise = this.fallbackModel.generateContent(prompt, {
+              generationConfig: { temperature: 0 }
+            });
+            
+            response = await Promise.race([fallbackPromise, timeoutPromise]);
+          } catch (fallbackError) {
+            console.log('⚠️ Both Gemini models failed for verification, skipping grounding check');
+            this.consecutiveFailures++;
+            return false; // Skip verification if both models fail
+          }
+        } else {
+          throw primaryError;
+        }
+      }
 
       const answer = response.response.text().trim().toUpperCase();
+      this.consecutiveFailures = 0; // Reset on success
       return answer === 'YES';
     } catch (error) {
       console.error('❌ Grounding check failed:', error);
+      this.consecutiveFailures++;
       return false; // Conservative: assume not grounded if check fails
     }
   }

@@ -49,7 +49,7 @@ async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
     try {
       const response = await fetch(url, {
         headers: {
-          'User-Agent': 'MedGuidance-AI (mailto:wenuupattipati@gmail.com)',
+          'User-Agent': 'OpenWork-AI (mailto:wenuupattipati@gmail.com)',
         },
       });
       
@@ -92,7 +92,7 @@ export async function searchMedlinePlus(
       term: query,
       retmax: maxResults.toString(),
       rettype: "brief", // Get brief format with snippets
-      tool: "MedGuidance-AI",
+      tool: "OpenWork-AI",
       email: USER_EMAIL,
     });
     

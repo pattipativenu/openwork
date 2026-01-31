@@ -22,9 +22,18 @@ export interface ChunkForRerank {
 
 export class TwoStageReranker {
   private fullTextFetcher: FullTextFetcher;
+  private useBGEReranker: boolean;
 
   constructor(ncbiApiKey: string) {
     this.fullTextFetcher = new FullTextFetcher(ncbiApiKey);
+    // Feature flag for BGE reranker - set to false until proper BGE service is available
+    this.useBGEReranker = process.env.USE_BGE_RERANKER === 'true';
+    
+    if (this.useBGEReranker) {
+      console.log('🔄 BGE Reranker enabled - using external BGE service');
+    } else {
+      console.log('🔄 Using deterministic semantic similarity scoring (BGE disabled)');
+    }
   }
 
   async rerank(
@@ -186,14 +195,21 @@ export class TwoStageReranker {
   }
 
   private async scoreDocuments(query: string, candidates: EvidenceCandidate[]): Promise<number[]> {
-    // Simulate BGE scoring (in production, this would call the actual BGE model)
-    // For now, use simple text similarity as placeholder
+    if (this.useBGEReranker) {
+      // Use actual BGE reranker service
+      return this.callBGERerankerService(query, candidates.map(c => ({
+        text: `${c.title || 'Untitled'}\n\n${c.text || 'No content available'}`.substring(0, 1500)
+      })));
+    }
     
+    // Fallback to deterministic semantic similarity scoring
     const scores: number[] = [];
     
     for (const candidate of candidates) {
-      const docText = `${candidate.title}\n\n${candidate.text.substring(0, 1500)}`;
-      const score = this.calculateSimpleScore(query, docText);
+      // Ensure text field exists and is not undefined
+      const text = candidate.text || candidate.title || 'No content available';
+      const docText = `${candidate.title || 'Untitled'}\n\n${text.substring(0, 1500)}`;
+      const score = this.calculateSemanticScore(query, docText);
       scores.push(score);
     }
 
@@ -201,32 +217,133 @@ export class TwoStageReranker {
   }
 
   private async scoreChunks(query: string, chunks: ChunkForRerank[]): Promise<number[]> {
-    // Simulate BGE chunk scoring
+    if (this.useBGEReranker) {
+      // Use actual BGE reranker service
+      return this.callBGERerankerService(query, chunks.map(c => ({
+        text: `Title: ${c.title}\nSource: ${c.source}\n\n${c.text}`
+      })));
+    }
+    
+    // Fallback to deterministic semantic similarity scoring
     const scores: number[] = [];
     
     for (const chunk of chunks) {
       const chunkText = `Title: ${chunk.title}\nSource: ${chunk.source}\n\n${chunk.text}`;
-      const score = this.calculateSimpleScore(query, chunkText);
+      const score = this.calculateSemanticScore(query, chunkText);
       scores.push(score);
     }
 
     return scores;
   }
 
-  private calculateSimpleScore(query: string, text: string): number {
-    // Simple scoring based on keyword overlap (placeholder for BGE)
-    const queryWords = query.toLowerCase().split(/\s+/);
-    const textWords = text.toLowerCase().split(/\s+/);
+  private async callBGERerankerService(query: string, documents: Array<{text: string}>): Promise<number[]> {
+    // TODO: Implement actual BGE reranker API call
+    // Example implementation:
+    /*
+    try {
+      const response = await fetch(process.env.BGE_RERANKER_ENDPOINT!, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.BGE_RERANKER_API_KEY}`
+        },
+        body: JSON.stringify({
+          query,
+          documents: documents.map(d => d.text),
+          model: 'BAAI/bge-reranker-v2-m3'
+        })
+      });
+      
+      const result = await response.json();
+      return result.scores || documents.map(() => 0.5);
+    } catch (error) {
+      console.error('❌ BGE reranker service failed:', error);
+      // Fallback to semantic scoring
+      return documents.map(doc => this.calculateSemanticScore(query, doc.text));
+    }
+    */
     
-    let matches = 0;
+    throw new Error('BGE reranker service not implemented - use deterministic scoring instead');
+  }
+
+  private calculateSemanticScore(query: string, text: string): number {
+    // Deterministic semantic similarity scoring (replaces random component)
+    const queryWords = this.extractKeywords(query.toLowerCase());
+    const textWords = this.extractKeywords(text.toLowerCase());
+    
+    // Exact keyword matches (high weight)
+    let exactMatches = 0;
     for (const word of queryWords) {
-      if (word.length > 3 && textWords.some(tw => tw.includes(word) || word.includes(tw))) {
-        matches++;
+      if (textWords.includes(word)) {
+        exactMatches++;
       }
     }
     
-    const score = Math.min(matches / queryWords.length, 1.0);
-    return score * 0.8 + Math.random() * 0.2; // Add some randomness
+    // Partial matches (medium weight)
+    let partialMatches = 0;
+    for (const queryWord of queryWords) {
+      for (const textWord of textWords) {
+        if (queryWord.length > 3 && textWord.length > 3) {
+          if (queryWord.includes(textWord) || textWord.includes(queryWord)) {
+            partialMatches++;
+            break;
+          }
+        }
+      }
+    }
+    
+    // Medical term bonus (high weight for medical keywords)
+    const medicalTerms = ['treatment', 'therapy', 'diagnosis', 'patient', 'clinical', 'study', 'trial', 'efficacy', 'safety', 'dose', 'drug', 'medication', 'disease', 'syndrome', 'symptoms'];
+    let medicalBonus = 0;
+    for (const term of medicalTerms) {
+      if (query.toLowerCase().includes(term) && text.toLowerCase().includes(term)) {
+        medicalBonus += 0.1;
+      }
+    }
+    
+    // Title relevance bonus
+    const titleBonus = this.calculateTitleRelevance(query, text);
+    
+    // Calculate final score (deterministic, no randomness)
+    const exactScore = (exactMatches / Math.max(queryWords.length, 1)) * 0.5;
+    const partialScore = (partialMatches / Math.max(queryWords.length, 1)) * 0.2;
+    const bonusScore = Math.min(medicalBonus + titleBonus, 0.3);
+    
+    const finalScore = Math.min(exactScore + partialScore + bonusScore, 1.0);
+    
+    // Ensure minimum score for any document (prevents zero scores)
+    return Math.max(finalScore, 0.1);
+  }
+  
+  private extractKeywords(text: string): string[] {
+    // Extract meaningful keywords, filtering out stop words
+    const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'this', 'that', 'these', 'those']);
+    
+    return text
+      .split(/\s+/)
+      .map(word => word.replace(/[^\w]/g, '').toLowerCase())
+      .filter(word => word.length > 2 && !stopWords.has(word))
+      .slice(0, 20); // Limit to top 20 keywords for performance
+  }
+  
+  private calculateTitleRelevance(query: string, text: string): number {
+    // Extract title from text (assuming it's at the beginning)
+    const lines = text.split('\n');
+    const title = lines[0] || '';
+    
+    const queryKeywords = this.extractKeywords(query);
+    const titleKeywords = this.extractKeywords(title);
+    
+    let titleMatches = 0;
+    for (const queryWord of queryKeywords) {
+      if (titleKeywords.some(titleWord => 
+        titleWord.includes(queryWord) || queryWord.includes(titleWord)
+      )) {
+        titleMatches++;
+      }
+    }
+    
+    return titleMatches > 0 ? Math.min(titleMatches / queryKeywords.length * 0.2, 0.2) : 0;
   }
 
   private chunkDocument(candidate: EvidenceCandidate): ChunkForRerank[] {

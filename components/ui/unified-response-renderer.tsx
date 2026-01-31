@@ -205,8 +205,8 @@ export function UnifiedResponseRenderer({
             </p>
             <p className="text-gray-600 leading-relaxed">
               {mode === 'doctor' 
-                ? 'This response is generated using evidence from peer-reviewed literature, clinical guidelines, and medical databases. While we strive for accuracy, AI can make mistakes. Please verify critical information with primary sources and apply your clinical judgment. This tool is designed to assist, not replace, professional medical decision-making.'
-                : 'This is an AI-generated response for educational purposes only. It is not a substitute for professional medical advice, diagnosis, or treatment. If you\'re experiencing health concerns, please consult with a qualified healthcare provider, doctor, or visit your nearest clinic. For emergencies, call your local emergency services immediately.'
+                ? 'This response is generated using evidence from peer-reviewed literature, clinical guidelines, and medical databases. While we strive for accuracy, AI can make mistakes. Please verify critical information with primary sources and apply your clinical judgment. This tool is designed to assist research and evidence synthesis, not replace professional medical decision-making.'
+                : 'This is an AI-generated research synthesis for educational purposes only. It summarizes and analyzes research papers and medical literature. This tool helps save time by finding and synthesizing relevant research articles. It is not a substitute for professional medical consultation. For health concerns, please consult with a qualified healthcare provider.'
               }
             </p>
           </div>

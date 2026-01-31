@@ -57,7 +57,7 @@ export async function searchRxNormDrugs(drugName: string): Promise<RxNormDrug[]>
     const response = await fetch(url, {
       headers: {
         'Accept': 'application/json',
-        'User-Agent': 'MedGuidance-AI/1.0'
+        'User-Agent': 'OpenWork-AI/1.0'
       },
       signal: AbortSignal.timeout(10000)
     });
@@ -108,7 +108,7 @@ export async function getDrugClasses(rxcui: string): Promise<RxNormDrugClass[]> 
     const response = await fetch(url, {
       headers: {
         'Accept': 'application/json',
-        'User-Agent': 'MedGuidance-AI/1.0'
+        'User-Agent': 'OpenWork-AI/1.0'
       },
       signal: AbortSignal.timeout(10000)
     });
@@ -160,7 +160,7 @@ export async function getDrugInteractions(rxcuis: string[]): Promise<RxNormInter
     const response = await fetch(url, {
       headers: {
         'Accept': 'application/json',
-        'User-Agent': 'MedGuidance-AI/1.0'
+        'User-Agent': 'OpenWork-AI/1.0'
       },
       signal: AbortSignal.timeout(10000)
     });
@@ -213,7 +213,7 @@ export async function getRelatedDrugs(rxcui: string): Promise<RxNormRelatedDrug[
     const response = await fetch(url, {
       headers: {
         'Accept': 'application/json',
-        'User-Agent': 'MedGuidance-AI/1.0'
+        'User-Agent': 'OpenWork-AI/1.0'
       },
       signal: AbortSignal.timeout(10000)
     });
@@ -271,7 +271,7 @@ export async function getPrescribableDrugs(ingredientName: string): Promise<RxNo
     const response = await fetch(url, {
       headers: {
         'Accept': 'application/json',
-        'User-Agent': 'MedGuidance-AI/1.0'
+        'User-Agent': 'OpenWork-AI/1.0'
       },
       signal: AbortSignal.timeout(10000)
     });

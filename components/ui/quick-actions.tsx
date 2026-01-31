@@ -17,7 +17,7 @@ export function QuickActions({ mode, responseContent, onAction }: QuickActionsPr
     try {
       if (navigator.share) {
         await navigator.share({
-          title: "MedGuidance AI Response",
+          title: "OpenWork AI Response",
           text: responseContent.substring(0, 200) + "...",
         });
       } else {

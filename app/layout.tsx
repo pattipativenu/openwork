@@ -31,8 +31,8 @@ const playfair = Playfair_Display({
 });
 
 export const metadata: Metadata = {
-  title: "MedGuidance AI - Evidence-Based Medical Insights",
-  description: "Advanced medical AI assistant providing evidence-based clinical information for healthcare professionals.",
+  title: "OpenWork AI - Medical Research Synthesis Tool",
+  description: "Advanced medical research tool providing evidence synthesis and literature analysis for healthcare professionals.",
 };
 
 export default function RootLayout({

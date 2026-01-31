@@ -12,7 +12,6 @@ export const genAI = new GoogleGenerativeAI(apiKey || "");
 // Using Gemini 2.0 Experimental models as the latest available versions matching the request intent
 export const GEMINI_FLASH_MODEL = "gemini-2.0-flash-exp";
 export const GEMINI_PRO_MODEL = "gemini-2.0-pro-exp";
-export const GEMINI_TTS_MODEL = "gemini-2.5-pro-preview-tts";
 
 export const generationConfig: GenerationConfig = {
   temperature: 0.7,

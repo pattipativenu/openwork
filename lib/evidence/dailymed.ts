@@ -350,7 +350,7 @@ export async function searchDailyMedByName(drugName: string, limit: number = 10)
     const searchUrl = `https://dailymed.nlm.nih.gov/dailymed/services/v2/spls.json?drug_name=${encodeURIComponent(drugName)}&pagesize=${limit}`;
 
     const headers: Record<string, string> = {
-      'User-Agent': 'MedGuidance-AI/1.0 (Medical Evidence System)',
+      'User-Agent': 'OpenWork-AI/1.0 (Medical Evidence System)',
     };
 
     if (apiKey) {
@@ -404,7 +404,7 @@ export async function searchDailyMedByRxCUI(rxcui: string, limit: number = 10): 
     const searchUrl = `https://dailymed.nlm.nih.gov/dailymed/services/v2/spls.json?rxcui=${rxcui}&pagesize=${limit}`;
 
     const headers: Record<string, string> = {
-      'User-Agent': 'MedGuidance-AI/1.0 (Medical Evidence System)',
+      'User-Agent': 'OpenWork-AI/1.0 (Medical Evidence System)',
     };
 
     if (apiKey) {
@@ -455,7 +455,7 @@ export async function getDailyMedSPLDetails(setid: string): Promise<DailyMedDrug
     const apiKey = process.env.NCBI_API_KEY_DAILYMED;
 
     const headers: Record<string, string> = {
-      'User-Agent': 'MedGuidance-AI/1.0 (Medical Evidence System)',
+      'User-Agent': 'OpenWork-AI/1.0 (Medical Evidence System)',
     };
 
     if (apiKey) {

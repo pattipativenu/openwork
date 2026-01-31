@@ -61,7 +61,7 @@ export async function fetchMetadataFromDOI(doi: string): Promise<ArticleMetadata
   try {
     const response = await fetch(`https://api.crossref.org/works/${encodeURIComponent(doi)}`, {
       headers: {
-        'User-Agent': 'MedGuidance-AI/1.0 (mailto:support@medguidance.ai)',
+        'User-Agent': 'OpenWork-AI/1.0 (mailto:support@openwork.ai)',
       },
     });
     

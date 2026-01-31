@@ -1,7 +1,7 @@
 /**
  * Agent 2: Multi-Source Retrieval Coordinator
- * Orchestrates parallel retrieval from all required sources
- * FIXED: Now uses the comprehensive evidence engine (lib/evidence/)
+ * Orchestrates parallel retrieval from all required sources with intelligent sub-agent routing
+ * ENHANCED: Now uses specialized queries from Agent 1 for optimal sub-agent performance
  */
 
 import { QueryAnalysis, EvidenceCandidate, TraceContext } from './types';
@@ -13,8 +13,10 @@ import { comprehensiveDailyMedSearch } from '../evidence/dailymed';
 import { comprehensiveCochraneSearch } from '../evidence/cochrane';
 import { searchClinicalTrials } from '../evidence/clinical-trials';
 
-// Sub-agent imports (only for guidelines - Firestore specific)
+// Sub-agent imports with specialized query handling
 import { GuidelinesRetriever } from './sub-agents/guidelines-retriever';
+import { PubMedIntelligence } from './sub-agents/pubmed-intelligence';
+import { DailyMedRetriever } from './sub-agents/dailymed-retriever';
 import { TavilySmartSearch } from './sub-agents/tavily-search';
 
 export interface RetrievalResults {
@@ -37,14 +39,18 @@ export interface RetrievalResults {
 
 export class MultiSourceRetrievalCoordinator {
   private guidelines: GuidelinesRetriever;
+  private pubmedIntelligence: PubMedIntelligence;
+  private dailymedRetriever: DailyMedRetriever;
   private tavily: TavilySmartSearch;
 
   constructor(config: {
     ncbi_api_key: string;
     tavily_api_key: string;
   }) {
-    // Only initialize what's not in evidence engine
+    // Initialize sub-agents with specialized capabilities
     this.guidelines = new GuidelinesRetriever();
+    this.pubmedIntelligence = new PubMedIntelligence(config.ncbi_api_key);
+    this.dailymedRetriever = new DailyMedRetriever();
     this.tavily = new TavilySmartSearch(config.tavily_api_key);
   }
 
@@ -56,41 +62,58 @@ export class MultiSourceRetrievalCoordinator {
     const startTime = Date.now();
     const tasks: Promise<any>[] = [];
     const sources = searchStrategy.requires_sources;
+    const subAgentQueries = searchStrategy.sub_agent_queries;
 
-    console.log(`🔍 Starting comprehensive evidence retrieval from 15+ sources...`);
+    console.log(`🔍 Starting intelligent sub-agent retrieval with specialized queries...`);
     console.log(`📋 Original query: "${originalQuery || 'Not provided'}"`);
+    console.log(`🎯 Sub-agent routing decisions:`);
+    console.log(`   Guidelines: ${subAgentQueries.guidelines?.should_call ? '✓' : '✗'} - ${subAgentQueries.guidelines?.reasoning}`);
+    console.log(`   PubMed: ${subAgentQueries.pubmed?.should_call ? '✓' : '✗'} - ${subAgentQueries.pubmed?.reasoning}`);
+    console.log(`   DailyMed: ${subAgentQueries.dailymed?.should_call ? '✓' : '✗'} - ${subAgentQueries.dailymed?.reasoning}`);
 
-    // 1. Guidelines (Firestore - Indian guidelines)
-    if (sources.guidelines) {
+    // Add timeout wrapper for all searches (30 seconds max)
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Retrieval timeout')), 30000)
+    );
+
+    // 1. Guidelines Retriever - Use specialized queries from Agent 1
+    if (subAgentQueries.guidelines?.should_call && subAgentQueries.guidelines.rephrased_queries.length > 0) {
+      console.log(`📋 Guidelines: Using ${subAgentQueries.guidelines.rephrased_queries.length} specialized queries`);
       tasks.push(
         this.guidelines.search(
-          searchStrategy.search_variants,
-          traceContext
+          subAgentQueries.guidelines.rephrased_queries,
+          traceContext,
+          originalQuery
         ).then(results => ({ type: 'guidelines', results }))
       );
     } else {
       tasks.push(Promise.resolve({ type: 'guidelines', results: [] }));
     }
 
-    // 2. PubMed (Evidence Engine - Advanced with MeSH + Medical Source Bible)
-    if (sources.pubmed) {
+    // 2. PubMed Intelligence - Use specialized queries with MeSH terms from Agent 1
+    if (subAgentQueries.pubmed?.should_call && subAgentQueries.pubmed.rephrased_queries.length > 0) {
+      console.log(`🔬 PubMed: Using ${subAgentQueries.pubmed.rephrased_queries.length} specialized queries with MeSH terms`);
       tasks.push(
-        comprehensivePubMedSearch(
-          searchStrategy.search_variants.join(' OR '),
-          false, // isGuidelineQuery
-          [] // guidelineBodies
-        ).then(results => ({ type: 'pubmed', results: results.articles }))
+        this.pubmedIntelligence.search(
+          subAgentQueries.pubmed.rephrased_queries,
+          searchStrategy.entities,
+          traceContext,
+          originalQuery
+        ).then(results => ({ type: 'pubmed', results }))
       );
     } else {
       tasks.push(Promise.resolve({ type: 'pubmed', results: [] }));
     }
 
-    // 3. DailyMed (Evidence Engine - Advanced SPL parsing + Medical Source Bible)
-    if (sources.dailymed && searchStrategy.entities.drugs.length > 0) {
+    // 3. DailyMed Retriever - Use clean drug names from Agent 1
+    if (subAgentQueries.dailymed?.should_call && subAgentQueries.dailymed.drug_names.length > 0) {
+      console.log(`💊 DailyMed: Using ${subAgentQueries.dailymed.drug_names.length} clean drug names`);
       tasks.push(
-        comprehensiveDailyMedSearch(
-          searchStrategy.entities.drugs.join(' OR ')
-        ).then(results => ({ type: 'dailymed', results: results.drugs }))
+        this.dailymedRetriever.search(
+          subAgentQueries.dailymed.drug_names,
+          traceContext,
+          originalQuery
+        ).then(results => ({ type: 'dailymed', results }))
       );
     } else {
       tasks.push(Promise.resolve({ type: 'dailymed', results: [] }));
@@ -123,10 +146,16 @@ export class MultiSourceRetrievalCoordinator {
     tasks.push(Promise.resolve({ type: 'pmc', results: [] }));
     tasks.push(Promise.resolve({ type: 'openalex', results: [] }));
 
-    // Execute all tasks in parallel
-    console.log(`⚡ Executing ${tasks.length} parallel searches...`);
-    const results = await Promise.all(tasks);
-    const totalLatency = Date.now() - startTime;
+    // Execute all tasks in parallel with timeout
+    console.log(`⚡ Executing ${tasks.length} parallel searches with intelligent routing...`);
+    
+    try {
+      const results = await Promise.race([
+        Promise.all(tasks),
+        timeoutPromise
+      ]) as any[];
+      
+      const totalLatency = Date.now() - startTime;
 
     // Organize results
     const organizedResults: RetrievalResults = {
@@ -151,19 +180,26 @@ export class MultiSourceRetrievalCoordinator {
       organizedResults[result.type as keyof RetrievalResults] = result.results || [];
     }
 
-    // Log comprehensive retrieval metrics
+    // Log comprehensive retrieval metrics with sub-agent intelligence
     const totalResults = Object.values(organizedResults).reduce((sum, arr) => sum + arr.length, 0);
     
     await logRetrieval(
-      'comprehensive_multi_source',
+      'intelligent_multi_source',
       traceContext,
       searchStrategy.search_variants.join(' | '),
       totalResults,
       totalLatency,
       {
         guidelines_count: organizedResults.guidelines.length,
+        guidelines_called: subAgentQueries.guidelines?.should_call || false,
+        guidelines_queries: subAgentQueries.guidelines?.rephrased_queries.length || 0,
         pubmed_count: organizedResults.pubmed.length,
+        pubmed_called: subAgentQueries.pubmed?.should_call || false,
+        pubmed_queries: subAgentQueries.pubmed?.rephrased_queries.length || 0,
+        pubmed_mesh_terms: subAgentQueries.pubmed?.mesh_terms.length || 0,
         dailymed_count: organizedResults.dailymed.length,
+        dailymed_called: subAgentQueries.dailymed?.should_call || false,
+        dailymed_drugs: subAgentQueries.dailymed?.drug_names.length || 0,
         clinical_trials_count: organizedResults.clinical_trials.length,
         cochrane_count: organizedResults.cochrane.length,
         bmj_count: organizedResults.bmj.length,
@@ -175,14 +211,19 @@ export class MultiSourceRetrievalCoordinator {
         europe_pmc_count: organizedResults.europe_pmc.length,
         pmc_count: organizedResults.pmc.length,
         openalex_count: organizedResults.openalex.length,
-        sources_used: Object.keys(sources).filter(k => sources[k as keyof typeof sources]).length
+        sub_agents_called: [
+          subAgentQueries.guidelines?.should_call,
+          subAgentQueries.pubmed?.should_call,
+          subAgentQueries.dailymed?.should_call
+        ].filter(Boolean).length
       }
     );
 
-    console.log(`✅ Comprehensive evidence retrieval complete: ${totalResults} documents in ${totalLatency}ms`);
-    console.log(`   📚 Guidelines: ${organizedResults.guidelines.length}`);
-    console.log(`   🔬 PubMed: ${organizedResults.pubmed.length}`);
-    console.log(`   💊 DailyMed: ${organizedResults.dailymed.length}`);
+    console.log(`✅ Intelligent evidence retrieval complete: ${totalResults} documents in ${totalLatency}ms`);
+    console.log(`🎯 Sub-agent performance:`);
+    console.log(`   📚 Guidelines: ${organizedResults.guidelines.length} (${subAgentQueries.guidelines?.rephrased_queries.length || 0} specialized queries)`);
+    console.log(`   � PubMed: ${organizedResults.pubmed.length} (${subAgentQueries.pubmed?.rephrased_queries.length || 0} queries, ${subAgentQueries.pubmed?.mesh_terms.length || 0} MeSH terms)`);
+    console.log(`   � DailyMed: ${organizedResults.dailymed.length} (${subAgentQueries.dailymed?.drug_names.length || 0} clean drug names)`);
     console.log(`   🧪 Clinical Trials: ${organizedResults.clinical_trials.length}`);
     console.log(`   📊 Cochrane: ${organizedResults.cochrane.length}`);
     console.log(`   🏥 BMJ: ${organizedResults.bmj.length}`);
@@ -196,6 +237,32 @@ export class MultiSourceRetrievalCoordinator {
     console.log(`   🔍 OpenAlex: ${organizedResults.openalex.length}`);
 
     return organizedResults;
+    
+    } catch (error) {
+      console.error('❌ Intelligent evidence retrieval failed or timed out:', error);
+      
+      // Return partial results if available
+      const partialResults: RetrievalResults = {
+        guidelines: [],
+        pubmed: [],
+        dailymed: [],
+        clinical_trials: [],
+        cochrane: [],
+        bmj: [],
+        nice: [],
+        who: [],
+        cdc: [],
+        landmark_trials: [],
+        semantic_scholar: [],
+        europe_pmc: [],
+        pmc: [],
+        openalex: [],
+        tavily: []
+      };
+      
+      console.log('⚠️ Returning empty results due to intelligent retrieval failure/timeout');
+      return partialResults;
+    }
   }
 
   // Method to be called by Agent 5 if Tavily search needed

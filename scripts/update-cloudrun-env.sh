@@ -5,8 +5,8 @@
 
 set -e
 
-PROJECT_ID="mediguidence-ai"
-SERVICE_NAME="medguidance-ai"
+PROJECT_ID="openwork-ai"
+SERVICE_NAME="openwork-ai"
 REGION="us-central1"
 
 echo "🔐 Updating Cloud Run environment variables..."
@@ -42,6 +42,6 @@ gcloud run services update $SERVICE_NAME \
 echo ""
 echo "✅ Environment variables updated successfully!"
 echo ""
-echo "🌐 Service URL: https://medguidance-ai-473674535154.us-central1.run.app"
+echo "🌐 Service URL: https://openwork-ai-473674535154.us-central1.run.app"
 echo ""
 echo "⚠️  Note: It may take a few seconds for the new revision to be ready"

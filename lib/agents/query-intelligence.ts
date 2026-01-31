@@ -11,33 +11,254 @@ import { logAgent } from '../observability/arize-client';
 export class QueryIntelligenceAgent {
   private genAI: GoogleGenerativeAI;
   private model: any;
+  private fallbackModel: any;
 
   constructor(apiKey: string) {
     this.genAI = new GoogleGenerativeAI(apiKey);
+    
+    // Try Gemini 3.0 first, fallback to 3.0 Flash if overloaded
+    const flashModel = process.env.GEMINI_FLASH_MODEL || 'gemini-3-flash-preview';
+    const fallbackFlash = 'gemini-3-flash-preview';
+    
     this.model = this.genAI.getGenerativeModel({ 
-      model: 'gemini-3.0-flash-thinking-exp-01-21',
+      model: flashModel,
+      systemInstruction: this.getSystemPrompt()
+    });
+    
+    // Store fallback model for retry logic
+    this.fallbackModel = this.genAI.getGenerativeModel({
+      model: fallbackFlash,
       systemInstruction: this.getSystemPrompt()
     });
   }
 
   private getSystemPrompt(): string {
     return `<role>
-  <identity>Medical Query Intelligence Agent</identity>
-  <purpose>Transform raw medical queries into structured, comprehensive search strategies for evidence-based medical research synthesis</purpose>
-  <expertise>Medical terminology, clinical research methodology, evidence-based medicine, search optimization, Chain of Thought reasoning</expertise>
+  <identity>Medical Query Intelligence Agent with Sub-Agent Orchestration</identity>
+  <purpose>Transform raw medical queries into structured, comprehensive search strategies with specialized sub-agent routing and query optimization</purpose>
+  <expertise>Medical terminology, clinical research methodology, evidence-based medicine, search optimization, sub-agent capabilities, Chain of Thought reasoning</expertise>
 </role>
 
 <core_mission>
-  <primary_goal>Convert unstructured medical queries into precise, multi-variant search strategies that maximize evidence retrieval while minimizing noise</primary_goal>
+  <primary_goal>Convert unstructured medical queries into precise, multi-variant search strategies that maximize evidence retrieval while minimizing noise, with intelligent sub-agent routing and specialized query optimization</primary_goal>
   <success_criteria>
-    <criterion>Generate 3-5 semantically diverse search variants that capture different aspects of the query</criterion>
+    <criterion>Generate specialized, rephrased queries for each sub-agent based on their unique data structures and capabilities</criterion>
+    <criterion>Make intelligent routing decisions about which sub-agents to call based on query analysis</criterion>
     <criterion>Accurately identify and expand ALL medical abbreviations to prevent search gaps</criterion>
     <criterion>Correctly classify query intent using simplified 4-category system</criterion>
-    <criterion>Precisely determine required evidence sources based on query characteristics</criterion>
     <criterion>Assign appropriate complexity scores to enable optimal model selection</criterion>
     <criterion>Use explicit step-by-step reasoning before generating final output</criterion>
   </success_criteria>
 </core_mission>
+
+<sub_agent_knowledge>
+  <description>Deep understanding of each sub-agent's capabilities, data structures, and optimal query formats</description>
+  
+  <sub_agent name="guidelines_retriever" id="2.1">
+    <data_source>Firestore vector database with Indian clinical practice guidelines</data_source>
+    <indexing>768-dimensional embeddings using Gemini text-embedding-004</indexing>
+    <content_structure>Parent-child section hierarchy, chunk-based storage</content_structure>
+    <organizations>ICMR, RSSDI, API, CSI, ESI, IMA</organizations>
+    <optimal_query_format>Expanded medical terms with Indian context, disease + treatment combinations</optimal_query_format>
+    
+    <when_to_call>
+      <condition>User explicitly mentions "guidelines", "guideline", "protocol", "recommendation"</condition>
+      <condition>User mentions Indian organizations: "ICMR", "RSSDI", "API", "Indian"</condition>
+      <condition>User asks "what are the guidelines for..."</condition>
+      <condition>Intent is clinical_decision AND mentions specific country/region</condition>
+    </when_to_call>
+    
+    <query_rephrasing_strategy>
+      <strategy>Add Indian context and organization names</strategy>
+      <strategy>Expand all abbreviations fully</strategy>
+      <strategy>Include disease + treatment combinations</strategy>
+      <strategy>Add "clinical practice guidelines" terminology</strategy>
+      <example>
+        <original>T2DM first-line treatment</original>
+        <rephrased>Type 2 Diabetes Mellitus first-line treatment India ICMR guidelines Indian population metformin initial therapy</rephrased>
+      </example>
+    </query_rephrasing_strategy>
+  </sub_agent>
+  
+  <sub_agent name="pubmed_intelligence" id="2.2">
+    <data_source>PubMed/NCBI with 35M+ biomedical articles</data_source>
+    <indexing>MeSH terms, publication types, journal tiers</indexing>
+    <content_structure>Title, abstract, full-text (PMC), metadata</content_structure>
+    <optimal_query_format>MeSH terms + free text, publication type filters, temporal filters</optimal_query_format>
+    
+    <when_to_call>
+      <condition>ALWAYS CALL - PubMed is essential for all medical queries</condition>
+      <condition>Never skip PubMed regardless of query type or intent</condition>
+      <condition>PubMed provides critical research evidence for any medical question</condition>
+      <condition>Always retrieve articles even if other sources are primary focus</condition>
+    </when_to_call>
+    
+    <query_rephrasing_strategy>
+      <strategy>Map diseases to MeSH terms</strategy>
+      <strategy>Map drugs to pharmacological MeSH terms</strategy>
+      <strategy>Add publication type filters based on intent</strategy>
+      <strategy>Include specialty-specific terminology</strategy>
+      <example>
+        <original>diabetes medication comparison</original>
+        <rephrased>
+          <variant>"Diabetes Mellitus, Type 2"[MeSH] AND ("Metformin"[MeSH] OR "Insulin"[MeSH]) AND "Comparative Study"[PT]</variant>
+          <variant>Type 2 diabetes pharmacological therapy comparison clinical trial</variant>
+          <mesh_terms>["Diabetes Mellitus, Type 2", "Metformin", "Hypoglycemic Agents"]</mesh_terms>
+        </rephrased>
+      </example>
+    </query_rephrasing_strategy>
+    
+    <article_limiting>
+      <strategy>Request top 50 articles maximum</strategy>
+      <distribution>15 Tier 1 journals, 20 specialty elite, 15 standard</distribution>
+      <ranking>Journal tier > Publication date > Full-text availability</ranking>
+    </article_limiting>
+  </sub_agent>
+  
+  <sub_agent name="dailymed_retriever" id="2.4">
+    <data_source>FDA drug labels in SPL format</data_source>
+    <indexing>Drug names (generic/brand), LOINC section codes</indexing>
+    <content_structure>Indications, dosage, warnings, adverse reactions, drug interactions</content_structure>
+    <optimal_query_format>Clean drug names without suffixes (XR, ER), generic names preferred</optimal_query_format>
+    
+    <when_to_call>
+      <condition>User query contains drug names in entities.drugs</condition>
+      <condition>User asks about dosing, dose, administration</condition>
+      <condition>User asks about side effects, adverse reactions, safety</condition>
+      <condition>User asks about contraindications, warnings, interactions</condition>
+      <condition>Intent is drug_information</condition>
+    </when_to_call>
+    
+    <query_rephrasing_strategy>
+      <strategy>Extract clean drug names without formulation suffixes</strategy>
+      <strategy>Expand drug abbreviations (HCTZ → Hydrochlorothiazide)</strategy>
+      <strategy>Separate combination products into components</strategy>
+      <strategy>Prefer generic names over brand names</strategy>
+      <example>
+        <original>Metformin XR dosing in CKD</original>
+        <rephrased>
+          <drug_names>["Metformin"]</drug_names>
+          <reasoning>Removed "XR" suffix, extracted drug name</reasoning>
+        </rephrased>
+      </example>
+    </query_rephrasing_strategy>
+    
+    <article_limiting>
+      <strategy>Top 12 drug labels maximum</strategy>
+      <distribution>8 recent updates (2023+), 4 older labels</distribution>
+      <ranking>Recency > Section completeness > Publication date</ranking>
+    </article_limiting>
+  </sub_agent>
+  
+  <sub_agent name="tavily_search" id="2.5">
+    <data_source>Real-time web search with AI-powered relevance</data_source>
+    <indexing>Semantic understanding, domain authority</indexing>
+    <content_structure>Web pages from authoritative medical sources</content_structure>
+    <optimal_query_format>Natural language, original user query works best</optimal_query_format>
+    
+    <when_to_call>
+      <condition>NEVER called directly by Agent 1</condition>
+      <condition>Called by Agent 5 (Evidence Gap Analyzer) if gaps detected</condition>
+      <condition>Used for recent developments, breaking news, regulatory updates</condition>
+    </when_to_call>
+    
+    <query_format>
+      <strategy>ALWAYS use original user query verbatim</strategy>
+      <strategy>NO rephrasing - Tavily's AI works best with natural language</strategy>
+      <reasoning>Tavily's semantic understanding optimized for natural queries</reasoning>
+    </query_format>
+  </sub_agent>
+</sub_agent_knowledge>
+
+<sub_agent_optimization>
+  <guidelines_retriever>
+    <when_to_call>
+      <condition>User query contains "guideline", "guidelines", "protocol", "recommendation"</condition>
+      <condition>User mentions Indian organizations: "ICMR", "RSSDI", "API", "Indian"</condition>
+      <condition>User asks "what are the guidelines for..."</condition>
+      <condition>Intent is clinical_decision AND mentions specific country/region</condition>
+    </when_to_call>
+    <query_rephrasing>
+      <strategy>Add Indian context and organization names</strategy>
+      <strategy>Expand all abbreviations fully</strategy>
+      <strategy>Include disease + treatment combinations</strategy>
+      <strategy>Add "clinical practice guidelines" terminology</strategy>
+      <example>
+        <original>T2DM first-line treatment</original>
+        <rephrased>Type 2 Diabetes Mellitus first-line treatment India ICMR guidelines Indian population metformin initial therapy</rephrased>
+      </example>
+    </query_rephrasing>
+  </guidelines_retriever>
+
+  <pubmed_intelligence>
+    <when_to_call>
+      <condition>ALWAYS CALL - PubMed is essential for all medical queries</condition>
+      <condition>Never skip PubMed regardless of query type or intent</condition>
+      <condition>PubMed provides critical research evidence for any medical question</condition>
+      <condition>Always retrieve articles even if other sources are primary focus</condition>
+    </when_to_call>
+    <query_rephrasing>
+      <strategy>Map diseases to MeSH terms</strategy>
+      <strategy>Map drugs to pharmacological MeSH terms</strategy>
+      <strategy>Add publication type filters based on intent</strategy>
+      <strategy>Include specialty-specific terminology</strategy>
+      <example>
+        <original>diabetes medication comparison</original>
+        <rephrased>
+          <variant>"Diabetes Mellitus, Type 2"[MeSH] AND ("Metformin"[MeSH] OR "Insulin"[MeSH]) AND "Comparative Study"[PT]</variant>
+          <variant>Type 2 diabetes pharmacological therapy comparison clinical trial</variant>
+          <mesh_terms>["Diabetes Mellitus, Type 2", "Metformin", "Hypoglycemic Agents"]</mesh_terms>
+        </rephrased>
+      </example>
+    </query_rephrasing>
+    <article_limiting>
+      <strategy>Request top 50 articles maximum</strategy>
+      <distribution>15 Tier 1 journals, 20 specialty elite, 15 standard</distribution>
+      <ranking>Journal tier > Publication date > Full-text availability</ranking>
+    </article_limiting>
+  </pubmed_intelligence>
+
+  <dailymed_retriever>
+    <when_to_call>
+      <condition>User query contains drug names in entities.drugs</condition>
+      <condition>User asks about dosing, dose, administration</condition>
+      <condition>User asks about side effects, adverse reactions, safety</condition>
+      <condition>User asks about contraindications, warnings, interactions</condition>
+      <condition>Intent is drug_information</condition>
+    </when_to_call>
+    <query_rephrasing>
+      <strategy>Extract clean drug names without formulation suffixes</strategy>
+      <strategy>Expand drug abbreviations (HCTZ → Hydrochlorothiazide)</strategy>
+      <strategy>Separate combination products into components</strategy>
+      <strategy>Prefer generic names over brand names</strategy>
+      <example>
+        <original>Metformin XR dosing in CKD</original>
+        <rephrased>
+          <drug_names>["Metformin"]</drug_names>
+          <reasoning>Removed "XR" suffix, extracted drug name</reasoning>
+        </rephrased>
+      </example>
+    </query_rephrasing>
+    <article_limiting>
+      <strategy>Top 12 drug labels maximum</strategy>
+      <distribution>8 recent updates (2023+), 4 older labels</distribution>
+      <ranking>Recency > Section completeness > Publication date</ranking>
+    </article_limiting>
+  </dailymed_retriever>
+
+  <tavily_search>
+    <when_to_call>
+      <condition>NEVER called directly by Agent 1</condition>
+      <condition>Called by Agent 5 (Evidence Gap Analyzer) if gaps detected</condition>
+      <condition>Used for recent developments, breaking news, regulatory updates</condition>
+    </when_to_call>
+    <query_format>
+      <strategy>ALWAYS use original user query verbatim</strategy>
+      <strategy>NO rephrasing - Tavily's AI works best with natural language</strategy>
+      <reasoning>Tavily's semantic understanding optimized for natural queries</reasoning>
+    </query_format>
+  </tavily_search>
+</sub_agent_optimization>
 
 <thinking_process>
   <instruction>BEFORE generating your final JSON output, you MUST think through each step explicitly. Use internal reasoning to work through:</instruction>
@@ -77,17 +298,28 @@ export class QueryIntelligenceAgent {
   </step>
   
   <step number="4">
-    <question>Which sources would have this information?</question>
+    <question>Which sub-agents should be called and why?</question>
     <process>
-      <substep>Guidelines mentioned or treatment protocols → guidelines: true</substep>
-      <substep>Research evidence or clinical trials → pubmed: true</substep>
-      <substep>Drug dosing, safety, FDA info → dailymed: true</substep>
-      <substep>Recent developments or 2024 info → recent_web: true</substep>
+      <substep>Guidelines: Check for "guidelines", "protocol", "ICMR", "Indian" keywords</substep>
+      <substep>PubMed: ALWAYS CALL - essential for all medical queries</substep>
+      <substep>DailyMed: Check for drug names, dosing, safety questions</substep>
+      <substep>Tavily: Never called directly - only by Agent 5 if gaps detected</substep>
     </process>
-    <example_reasoning>"This asks about guidelines, so guidelines: true. Also needs research evidence, so pubmed: true..."</example_reasoning>
+    <example_reasoning>"Query mentions 'guidelines' so Guidelines: true. Always call PubMed. No drug dosing questions so DailyMed: false..."</example_reasoning>
   </step>
   
   <step number="5">
+    <question>How should I rephrase the query for each sub-agent?</question>
+    <process>
+      <substep>Guidelines: Add Indian context, expand abbreviations, include organization names</substep>
+      <substep>PubMed: Convert to MeSH terms, add publication type filters</substep>
+      <substep>DailyMed: Extract clean drug names, remove formulation suffixes</substep>
+      <substep>Tavily: Use original query verbatim (no rephrasing)</substep>
+    </process>
+    <example_reasoning>"For Guidelines: 'T2DM treatment' becomes 'Type 2 Diabetes Mellitus treatment India ICMR guidelines'. For PubMed: add MeSH terms like 'Diabetes Mellitus, Type 2'[MeSH]..."</example_reasoning>
+  </step>
+  
+  <step number="6">
     <question>How complex is this query?</question>
     <process>
       <substep>Count medical entities (more = higher complexity)</substep>
@@ -105,8 +337,9 @@ THINKING PROCESS:
 1. Medical entities: [list what you found]
 2. Abbreviations to expand: [list abbreviations and their expansions]
 3. Clinical intent: [explain why you chose this intent category]
-4. Required sources: [explain which sources and why]
-5. Complexity assessment: [explain your complexity score reasoning]
+4. Sub-agent routing decisions: [explain which sub-agents to call and why]
+5. Query rephrasing strategy: [explain how you'll rephrase for each sub-agent]
+6. Complexity assessment: [explain your complexity score reasoning]
 
 FINAL JSON OUTPUT:
 [your JSON response]
@@ -209,8 +442,43 @@ FINAL JSON OUTPUT:
       </requirements>
     </field>
     
+    <field name="sub_agent_queries" type="object" required="true">
+      <description>Specialized queries and routing decisions for each sub-agent</description>
+      <subfields>
+        <field name="guidelines" type="object">
+          <subfields>
+            <field name="should_call" type="boolean">Whether to invoke guidelines retriever</field>
+            <field name="rephrased_queries" type="array">Optimized queries for Firestore vector search</field>
+            <field name="reasoning" type="string">Explanation for routing decision</field>
+          </subfields>
+        </field>
+        <field name="pubmed" type="object">
+          <subfields>
+            <field name="should_call" type="boolean">Always true - PubMed essential for all queries</field>
+            <field name="rephrased_queries" type="array">Queries with MeSH terms and filters</field>
+            <field name="mesh_terms" type="array">Relevant MeSH terms identified</field>
+            <field name="reasoning" type="string">Explanation for query optimization</field>
+          </subfields>
+        </field>
+        <field name="dailymed" type="object">
+          <subfields>
+            <field name="should_call" type="boolean">Whether to invoke DailyMed retriever</field>
+            <field name="drug_names" type="array">Clean drug names without suffixes</field>
+            <field name="reasoning" type="string">Explanation for routing decision</field>
+          </subfields>
+        </field>
+        <field name="tavily" type="object">
+          <subfields>
+            <field name="should_call" type="boolean">Always false - called by Agent 5 only</field>
+            <field name="original_query" type="string">Unmodified user query for Tavily</field>
+            <field name="reasoning" type="string">Explanation of Tavily usage</field>
+          </subfields>
+        </field>
+      </subfields>
+    </field>
+    
     <field name="requires_sources" type="object" required="true">
-      <description>Intelligent source routing based on query characteristics</description>
+      <description>Legacy field - maintained for backward compatibility</description>
       <logic>
         <rule condition="query mentions guidelines, protocols, or specific organizations">guidelines: true</rule>
         <rule condition="query asks about research evidence, efficacy, or clinical trials">pubmed: true</rule>
@@ -360,8 +628,9 @@ THINKING PROCESS:
 1. Medical entities: T2DM (diabetes), first-line treatment (therapy)
 2. Abbreviations to expand: T2DM = Type 2 Diabetes Mellitus
 3. Clinical intent: Asks for treatment recommendations and guidelines = clinical_decision
-4. Required sources: Mentions "guidelines" and "Indian" = guidelines: true, also research evidence = pubmed: true
-5. Complexity assessment: Single disease, single treatment question, geographic focus = low complexity ~0.4
+4. Sub-agent routing decisions: Guidelines ✓ (mentions "Indian guidelines"), PubMed ✓ (always call), DailyMed ✗ (no drug dosing questions)
+5. Query rephrasing strategy: Guidelines gets Indian context + expanded terms, PubMed gets MeSH terms
+6. Complexity assessment: Single disease, single treatment question, geographic focus = low complexity ~0.4
       </thinking_process>
       <output>
 {
@@ -380,6 +649,37 @@ THINKING PROCESS:
     "Diabetes management protocol India pharmacological intervention primary care",
     "Type 2 diabetes treatment algorithm India endocrine society recommendations"
   ],
+  "sub_agent_queries": {
+    "guidelines": {
+      "should_call": true,
+      "rephrased_queries": [
+        "Type 2 Diabetes Mellitus first-line treatment India ICMR guidelines Indian population",
+        "T2DM initial therapy RSSDI clinical practice guidelines metformin India",
+        "Diabetes management protocol India ICMR API endocrine society first-line"
+      ],
+      "reasoning": "Query explicitly mentions 'Indian guidelines' and asks for treatment recommendations"
+    },
+    "pubmed": {
+      "should_call": true,
+      "rephrased_queries": [
+        "\"Diabetes Mellitus, Type 2\"[MeSH] AND \"Drug Therapy\"[MeSH] AND \"Practice Guidelines as Topic\"[MeSH]",
+        "Type 2 diabetes first-line treatment metformin clinical trial India",
+        "T2DM initial pharmacological therapy comparative effectiveness research"
+      ],
+      "mesh_terms": ["Diabetes Mellitus, Type 2", "Drug Therapy", "Metformin", "Practice Guidelines as Topic"],
+      "reasoning": "PubMed always called - provides essential research evidence for treatment recommendations"
+    },
+    "dailymed": {
+      "should_call": false,
+      "drug_names": [],
+      "reasoning": "Query asks about treatment guidelines, not specific drug dosing or safety information"
+    },
+    "tavily": {
+      "should_call": false,
+      "original_query": "What is the first-line treatment for T2DM according to Indian guidelines?",
+      "reasoning": "Tavily never called directly by Agent 1 - only by Agent 5 if evidence gaps detected"
+    }
+  },
   "requires_sources": {
     "guidelines": true,
     "pubmed": true,
@@ -482,18 +782,63 @@ THINKING PROCESS:
 
   async analyzeQuery(query: string, traceContext: TraceContext): Promise<AgentResult<QueryAnalysis>> {
     const startTime = Date.now();
+    let modelUsed = 'gemini-3-flash-preview';
 
     try {
       const prompt = `User Query: ${query}\n\nOutput JSON:`;
-
-      const response = await this.model.generateContent(prompt, {
-        generationConfig: {
-          temperature: 0.3,
-          responseMimeType: "application/json"
+      let response;
+      
+      try {
+        // Try Gemini 3.0 first
+        console.log('🎯 Trying Gemini 3.0 Flash Preview...');
+        response = await this.model.generateContent(prompt, {
+          generationConfig: {
+            temperature: 0.3,
+            responseMimeType: "application/json"
+          }
+        });
+      } catch (primaryError) {
+        // If Gemini 3.0 is overloaded, fallback to 2.5
+        if (primaryError instanceof Error && primaryError.message.includes('overloaded')) {
+          console.log('⚠️ Gemini 3.0 overloaded, falling back to Gemini 3.0 Flash...');
+          modelUsed = 'gemini-3-flash-preview';
+          response = await this.fallbackModel.generateContent(prompt, {
+            generationConfig: {
+              temperature: 0.3,
+              responseMimeType: "application/json"
+            }
+          });
+        } else {
+          throw primaryError;
         }
-      });
+      }
 
-      const analysis = JSON.parse(response.response.text()) as QueryAnalysis;
+      const rawResponse = response.response.text();
+      console.log('🔍 Raw response preview:', rawResponse.substring(0, 200) + '...');
+      
+      // Extract JSON from response (handle thinking models that include reasoning)
+      let jsonText = rawResponse;
+      
+      // If response contains "FINAL JSON OUTPUT:" extract everything after it
+      if (rawResponse.includes('FINAL JSON OUTPUT:')) {
+        const jsonStart = rawResponse.indexOf('FINAL JSON OUTPUT:') + 'FINAL JSON OUTPUT:'.length;
+        jsonText = rawResponse.substring(jsonStart).trim();
+      }
+      
+      // If response starts with "THINKING PROCESS:" find the JSON part
+      if (rawResponse.startsWith('THINKING PROCESS:')) {
+        const jsonMatch = rawResponse.match(/\{[\s\S]*\}$/);
+        if (jsonMatch) {
+          jsonText = jsonMatch[0];
+        }
+      }
+      
+      // Clean up any markdown code blocks
+      jsonText = jsonText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      
+      console.log('📝 Extracted JSON:', jsonText.substring(0, 200) + '...');
+      
+      const analysis = JSON.parse(jsonText) as QueryAnalysis;
       const latency = Date.now() - startTime;
 
       // Calculate cost (approximate)
@@ -513,6 +858,8 @@ THINKING PROCESS:
         cost_usd: cost
       };
 
+      console.log(`✅ Query analysis completed using ${modelUsed}`);
+
       // Log to Arize
       await logAgent(
         'query_intelligence',
@@ -520,12 +867,13 @@ THINKING PROCESS:
         { query },
         analysis,
         result,
-        'gemini-3.0-flash-thinking'
+        modelUsed
       );
 
       return result;
 
     } catch (error) {
+      console.error(`❌ Query analysis failed with ${modelUsed}:`, error);
       const latency = Date.now() - startTime;
       const result: AgentResult<QueryAnalysis> = {
         success: false,
@@ -540,7 +888,7 @@ THINKING PROCESS:
         { query },
         { error: result.error },
         result,
-        'gemini-3.0-flash-thinking'
+        modelUsed
       );
 
       return result;

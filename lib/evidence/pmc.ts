@@ -11,7 +11,7 @@
  * - Direct integration with PubMed
  */
 
-const API_TOOL_NAME = "MedGuidance-AI";
+const API_TOOL_NAME = "OpenWork-AI";
 const API_CONTACT_EMAIL = "wenuupattipati@gmail.com";
 
 // NCBI API Key rotation for better rate limits

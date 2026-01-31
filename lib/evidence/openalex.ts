@@ -46,7 +46,7 @@ async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
       const response = await fetch(urlWithEmail, {
         headers: {
           // User-Agent with email ensures polite pool access
-          'User-Agent': `MedGuidance-AI (mailto:${USER_EMAIL})`,
+          'User-Agent': `OpenWork-AI (mailto:${USER_EMAIL})`,
           'Accept': 'application/json',
         },
       });

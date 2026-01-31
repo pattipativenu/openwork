@@ -53,9 +53,9 @@ export interface StoredFavorite {
 const ONE_HOUR = 60 * 60 * 1000; // 1 hour in milliseconds
 
 // Storage keys
-const CONVERSATIONS_KEY = 'medguidance_conversations';
-const FAVORITES_KEY = 'medguidance_favorites';
-const COLLECTIONS_KEY = 'medguidance_collections';
+const CONVERSATIONS_KEY = 'openwork_conversations';
+const FAVORITES_KEY = 'openwork_favorites';
+const COLLECTIONS_KEY = 'openwork_collections';
 
 /**
  * Get current timestamp + 1 hour

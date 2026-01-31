@@ -67,7 +67,7 @@ export async function searchClinicalTrials(
     const response = await fetch(url, {
       signal: AbortSignal.timeout(15000), // Increased timeout to 15 seconds
       headers: {
-        'User-Agent': 'MedGuidance-AI/1.0 (Medical Research Application)',
+        'User-Agent': 'OpenWork-AI/1.0 (Medical Research Application)',
         'Accept': 'application/json'
       }
     });
@@ -162,7 +162,7 @@ export async function searchTrialsByCondition(
     const response = await fetch(url, {
       signal: AbortSignal.timeout(15000),
       headers: {
-        'User-Agent': 'MedGuidance-AI/1.0 (Medical Research Application)',
+        'User-Agent': 'OpenWork-AI/1.0 (Medical Research Application)',
         'Accept': 'application/json'
       }
     });
@@ -194,7 +194,7 @@ export async function searchTrialsByIntervention(
     const response = await fetch(url, {
       signal: AbortSignal.timeout(15000),
       headers: {
-        'User-Agent': 'MedGuidance-AI/1.0 (Medical Research Application)',
+        'User-Agent': 'OpenWork-AI/1.0 (Medical Research Application)',
         'Accept': 'application/json'
       }
     });

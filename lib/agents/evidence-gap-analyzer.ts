@@ -17,7 +17,7 @@ export class EvidenceGapAnalyzer {
   constructor(apiKey: string) {
     this.genAI = new GoogleGenerativeAI(apiKey);
     this.model = this.genAI.getGenerativeModel({ 
-      model: 'gemini-3.0-pro-exp-02-05',
+      model: process.env.GEMINI_PRO_MODEL || 'gemini-3-pro-preview',
       systemInstruction: this.getSystemPrompt()
     });
   }
@@ -345,7 +345,46 @@ Output JSON:`;
         }
       });
 
-      const analysis = JSON.parse(response.response.text()) as EvidenceGapAnalysis;
+      let analysis: EvidenceGapAnalysis;
+      try {
+        const responseText = response.response.text();
+        
+        // Handle Gemini 3.0 thinking models that might wrap JSON in markdown
+        let jsonText = responseText;
+        if (responseText.includes('```json')) {
+          const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/);
+          if (jsonMatch) {
+            jsonText = jsonMatch[1];
+          }
+        } else if (responseText.includes('```')) {
+          const jsonMatch = responseText.match(/```\s*([\s\S]*?)\s*```/);
+          if (jsonMatch) {
+            jsonText = jsonMatch[1];
+          }
+        }
+        
+        analysis = JSON.parse(jsonText) as EvidenceGapAnalysis;
+      } catch (parseError) {
+        console.warn('⚠️ JSON parsing failed, using fallback analysis');
+        // Fallback analysis with all required EvidenceGapAnalysis fields
+        analysis = {
+          assessment: 'partial',
+          coverage_score: 0.7,
+          recency_concerns: false,
+          oldest_source_year: new Date().getFullYear() - 5, // Default to 5 years ago
+          quality_distribution: {
+            guidelines: 0,
+            rcts: 0,
+            observational: 0,
+            reviews: 0
+          },
+          contradictions_detected: false,
+          contradiction_summary: undefined,
+          missing_elements: ['Unable to parse detailed analysis'],
+          recommendation: 'proceed'
+        };
+      }
+      
       const latency = Date.now() - startTime;
 
       // Calculate cost
@@ -364,10 +403,14 @@ Output JSON:`;
       let updatedEvidence = evidencePack;
 
       // Trigger Tavily if gap detected and retriever available
-      if (analysis.recommendation === 'search_recent' && retriever) {
-        console.log(`🌐 Triggering Tavily search for recent evidence...`);
+      if ((analysis.recommendation === 'search_recent' || analysis.recommendation === 'search_specific_gap') && retriever) {
+        const searchType = analysis.recommendation === 'search_recent' ? 'recent evidence' : 'specific gaps';
+        console.log(`🌐 Triggering Tavily search for ${searchType}...`);
         
-        const tavilyQuery = `${query} recent 2024 2025 latest`;
+        const tavilyQuery = analysis.recommendation === 'search_recent' 
+          ? `${query} recent 2024 2025 latest`
+          : `${query} ${analysis.missing_elements?.join(' ') || 'guidelines recommendations'}`;
+        
         const existingUrls = new Set(
           evidencePack
             .map(item => item.metadata.url || item.id)
@@ -423,7 +466,7 @@ Output JSON:`;
         { query, num_sources: evidencePack.length },
         analysis,
         result,
-        'gemini-3.0-pro-exp'
+        'gemini-3-pro-preview'
       );
 
       return { analysis, updatedEvidence };
@@ -445,7 +488,7 @@ Output JSON:`;
         { query, num_sources: evidencePack.length },
         { error: result.error },
         result,
-        'gemini-3.0-pro-exp'
+        'gemini-3-pro-preview'
       );
 
       // Return default analysis to continue pipeline
@@ -482,7 +525,7 @@ ID: ${item.id}
 Title: ${item.title}
 Year: ${year}
 Relevance Score: ${item.score.toFixed(2)}
-Text Preview: ${item.text.substring(0, 300)}...
+Text Preview: ${(item.text || item.title || 'No content available').substring(0, 300)}...
 ---`);
     }
 

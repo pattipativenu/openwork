@@ -172,9 +172,9 @@ function ResponseTabs({
             </svg>
           </div>
           <div className="text-sm text-gray-600 font-ui">
-            <p className="font-semibold mb-1 text-gray-700">⚠️ AI-Generated Evidence-Based Response</p>
+            <p className="font-semibold mb-1 text-gray-700">⚠️ AI-Generated Research Synthesis</p>
             <p className="text-gray-600 leading-relaxed">
-              This response is generated using evidence from peer-reviewed literature, clinical guidelines, and medical databases. While we strive for accuracy, AI can make mistakes. Please verify critical information with primary sources and apply your clinical judgment. This is clinical decision support, not a substitute for professional medical expertise.
+              This response synthesizes evidence from peer-reviewed literature, clinical guidelines, and medical databases. While we strive for accuracy, AI can make mistakes. Please verify critical information with primary sources and apply your clinical judgment. This is a research tool that helps find and summarize relevant medical literature, not a substitute for professional medical expertise.
             </p>
           </div>
         </div>
@@ -770,7 +770,7 @@ export default function DoctorMode() {
                   </svg>
                 </div>
                 <div>
-                  <h1 className="text-xl font-semibold text-gray-900">MedGuidance</h1>
+                  <h1 className="text-xl font-semibold text-gray-900">OpenWork</h1>
                   <p className="text-xs text-gray-500">Doctor Mode</p>
                 </div>
               </button>

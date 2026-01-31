@@ -13,7 +13,7 @@
 import { withToolSpan } from '@/lib/otel';
 
 const NCBI_API_KEY = process.env.NCBI_API_KEY || '';
-const UNPAYWALL_EMAIL = 'medguidance-ai@example.com'; // Required by Unpaywall API
+const UNPAYWALL_EMAIL = 'openwork-ai@example.com'; // Required by Unpaywall API
 
 // Rate limiting for NCBI
 const NCBI_REQUEST_DELAY = NCBI_API_KEY ? 100 : 350;

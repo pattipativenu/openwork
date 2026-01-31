@@ -1,16 +1,16 @@
 #!/bin/bash
 
-# Deploy MedGuidance AI to Google Cloud Run
+# Deploy OpenWork AI to Google Cloud Run
 # Usage: ./scripts/deploy-cloudrun.sh
 
 set -e
 
-PROJECT_ID="mediguidence-ai"
-SERVICE_NAME="medguidance-ai"
+PROJECT_ID="openwork-ai"
+SERVICE_NAME="openwork-ai"
 REGION="us-central1"
 IMAGE_NAME="gcr.io/${PROJECT_ID}/${SERVICE_NAME}:latest"
 
-echo "🚀 Deploying MedGuidance AI to Cloud Run..."
+echo "🚀 Deploying OpenWork AI to Cloud Run..."
 echo ""
 
 # Step 1: Set project

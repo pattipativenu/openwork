@@ -12,15 +12,27 @@ export class SynthesisEngine {
   private genAI: GoogleGenerativeAI;
   private flashModel: any;
   private proModel: any;
+  private fallbackFlashModel: any;
+  private fallbackProModel: any;
 
   constructor(apiKey: string) {
     this.genAI = new GoogleGenerativeAI(apiKey);
     this.flashModel = this.genAI.getGenerativeModel({ 
-      model: 'gemini-3.0-flash-thinking-exp-01-21',
+      model: process.env.GEMINI_FLASH_MODEL || 'gemini-3-flash-preview',
       systemInstruction: this.getSystemPrompt()
     });
     this.proModel = this.genAI.getGenerativeModel({ 
-      model: 'gemini-3.0-pro-exp-02-05',
+      model: process.env.GEMINI_PRO_MODEL || 'gemini-3-pro-preview',
+      systemInstruction: this.getSystemPrompt()
+    });
+    
+    // Fallback models
+    this.fallbackFlashModel = this.genAI.getGenerativeModel({
+      model: 'gemini-3-flash-preview',
+      systemInstruction: this.getSystemPrompt()
+    });
+    this.fallbackProModel = this.genAI.getGenerativeModel({
+      model: 'gemini-3-flash-preview',
       systemInstruction: this.getSystemPrompt()
     });
   }
@@ -62,17 +74,27 @@ export class SynthesisEngine {
   <section name="evidence_synthesis" words="250-350">
     <purpose>Present evidence in order of strength and relevance with detailed analysis</purpose>
     <hierarchy>
-      <level priority="1">Clinical practice guidelines from major organizations [cite]</level>
-      <level priority="2">Systematic reviews and meta-analyses [cite]</level>
-      <level priority="3">Randomized controlled trials [cite]</level>
-      <level priority="4">Observational studies and cohort data [cite]</level>
-      <level priority="5">Case series and expert consensus [cite]</level>
+      <level priority="1">Indian Guidelines (when available and relevant) - ALWAYS show under "Indian Guidelines" heading [cite]</level>
+      <level priority="2">Clinical practice guidelines from major organizations [cite]</level>
+      <level priority="3">Systematic reviews and meta-analyses [cite]</level>
+      <level priority="4">Randomized controlled trials [cite]</level>
+      <level priority="5">Observational studies and cohort data [cite]</level>
+      <level priority="6">Case series and expert consensus [cite]</level>
     </hierarchy>
+    <indian_guidelines_requirements>
+      <requirement>ALWAYS check for indian_guideline sources in evidence pack</requirement>
+      <requirement>If indian_guideline sources exist, create "Indian Guidelines" subsection FIRST</requirement>
+      <requirement>Present summarized version of Indian Guidelines content</requirement>
+      <requirement>Use parent-child-grandparent-grandchild structure information when available</requirement>
+      <requirement>If NO Indian Guidelines found, prioritize PubMed articles under regular evidence hierarchy</requirement>
+      <requirement>NEVER show empty "Indian Guidelines" section - only show when content exists</requirement>
+    </indian_guidelines_requirements>
     <requirements>
       <requirement>Present contradictory evidence explicitly: "While [1] found X, [2] reported Y"</requirement>
       <requirement>Include quantitative data with precise citations</requirement>
       <requirement>Address population specificity and geographic relevance</requirement>
       <requirement>Note evidence limitations and study populations</requirement>
+      <requirement>For Indian Guidelines: Always show summarized content, not full text</requirement>
     </requirements>
   </section>
   
@@ -267,39 +289,43 @@ export class SynthesisEngine {
 Current evidence strongly supports metformin as first-line therapy for Type 2 diabetes mellitus[[1]](url1)[[2]](url2). Multiple international guidelines recommend metformin monotherapy as initial treatment for most patients with newly diagnosed T2DM due to its proven cardiovascular benefits and favorable safety profile[[3]](url3).
 
 ## Evidence Synthesis
-The American Diabetes Association 2024 Standards of Care specifically endorse metformin as first-line therapy, citing evidence from the UKPDS study showing sustained cardiovascular benefits over 20 years[[1]](url1). This recommendation is supported by systematic reviews demonstrating metformin reduces HbA1c by 1.0-1.5% and provides cardiovascular protection with 13-15% reduction in cardiovascular events[[2]](url2)[[4]](url4).
 
-The European Association for the Study of Diabetes guidelines align with this approach, noting metformin's low hypoglycemia risk and weight-neutral effects[[3]](url3). Real-world evidence from large cohort studies confirms these benefits, with metformin associated with reduced all-cause mortality compared to other antidiabetic agents[[5]](url5).
+### Indian Guidelines
+The RSSDI Clinical Practice Recommendations for Management of Type 2 Diabetes Mellitus 2020 specifically endorse metformin as first-line therapy for Indian patients[[1]](url1). The guidelines emphasize dose titration starting from 500mg twice daily, with particular attention to renal function monitoring in Indian populations[[1]](url1). ICMR-INDIAB study data supports this approach, showing effective glycemic control with metformin in diverse Indian ethnic groups[[2]](url2).
 
-However, contraindications exist in patients with severe renal impairment (eGFR <30 mL/min/1.73m²)[[1]](url1)[[3]](url3). Some guidelines suggest combination therapy for patients presenting with HbA1c >9% at diagnosis[[6]](url6).
+### International Evidence
+The American Diabetes Association 2024 Standards of Care specifically endorse metformin as first-line therapy, citing evidence from the UKPDS study showing sustained cardiovascular benefits over 20 years[[3]](url3). This recommendation is supported by systematic reviews demonstrating metformin reduces HbA1c by 1.0-1.5% and provides cardiovascular protection with 13-15% reduction in cardiovascular events[[4]](url4)[[5]](url5).
+
+The European Association for the Study of Diabetes guidelines align with this approach, noting metformin's low hypoglycemia risk and weight-neutral effects[[6]](url6). Real-world evidence from large cohort studies confirms these benefits, with metformin associated with reduced all-cause mortality compared to other antidiabetic agents[[7]](url7).
+
+However, contraindications exist in patients with severe renal impairment (eGFR <30 mL/min/1.73m²)[[3]](url3)[[6]](url6). Some guidelines suggest combination therapy for patients presenting with HbA1c >9% at diagnosis[[8]](url8).
 
 ## Evidence Limitations
-Evidence limitations include varying definitions of cardiovascular outcomes across studies[[2]](url2) and limited long-term safety data in certain populations, particularly those with advanced kidney disease[[7]](url7). Most pivotal trials were conducted in predominantly Caucasian populations, with less representation from Asian and African populations where genetic polymorphisms affecting drug metabolism may differ[[8]](url8).
+Evidence limitations include varying definitions of cardiovascular outcomes across studies[[4]](url4) and limited long-term safety data in certain populations, particularly those with advanced kidney disease[[9]](url9). Most pivotal trials were conducted in predominantly Caucasian populations, with less representation from Asian and African populations where genetic polymorphisms affecting drug metabolism may differ[[10]](url10). Indian Guidelines address some population-specific considerations but require validation in larger prospective studies[[1]](url1).
 
 ## Summary
-Strong evidence from multiple guidelines and systematic reviews supports metformin as first-line therapy for Type 2 diabetes, with proven cardiovascular benefits and favorable safety profile, though contraindications in advanced renal disease must be considered.
+Strong evidence from Indian and international guidelines supports metformin as first-line therapy for Type 2 diabetes, with proven cardiovascular benefits and favorable safety profile, though contraindications in advanced renal disease must be considered.
 
 ## References
 
-1. [American Diabetes Association Standards of Care in Diabetes—2024](https://pmc.ncbi.nlm.nih.gov/articles/PMC12345)
-   Authors: American Diabetes Association Professional Practice Committee.
-   Journal: Diabetes Care. 2024.
-   PMID: 12345678 | DOI: 10.2337/dc24-S001
-   Practice Guideline - High-Impact - Recent (≤3y)
+1. [RSSDI Clinical Practice Recommendations for Management of Type 2 Diabetes Mellitus 2020](https://example-guideline-url.com)
+   Authors: Research Society for Study of Diabetes in India.
+   Journal: Clinical Practice Guideline. 2020.
+   Practice Guideline - Recent (≤3y)
 
-2. [Cardiovascular Effects of Metformin: A Systematic Review and Meta-Analysis](https://pubmed.ncbi.nlm.nih.gov/87654321)
-   Authors: Smith J, Johnson A, Brown K, et al.
-   Journal: Lancet Diabetes Endocrinol. 2023.
-   PMID: 87654321 | DOI: 10.1016/S2213-8587(23)00123-4
-   Systematic Review - Meta-Analysis - High-Impact
+2. [ICMR-INDIAB Study: Metformin Effectiveness in Indian Type 2 Diabetes](https://pmc.ncbi.nlm.nih.gov/articles/PMC12345)
+   Authors: Pradeepa R, Anjana RM, Mohan V, et al.
+   Journal: Diabetes Care. 2023.
+   PMID: 12345678 | DOI: 10.2337/dc23-S001
+   Cohort Study - High-Impact - Recent (≤3y)
 
-[Continue with references 3-8...]
+[Continue with references 3-10...]
 
 ## Follow-Up Questions
 
-1. What are the specific contraindications and dose adjustments for metformin in patients with varying degrees of chronic kidney disease?
-2. How should metformin therapy be initiated and monitored in elderly patients with multiple comorbidities?
-3. What are the evidence-based criteria for adding a second antidiabetic agent when metformin monotherapy becomes insufficient?
+1. What are the specific contraindications and dose adjustments for metformin in patients with varying degrees of chronic kidney disease according to Indian Guidelines?
+2. How should metformin therapy be initiated and monitored in elderly Indian patients with multiple comorbidities?
+3. What are the evidence-based criteria for adding a second antidiabetic agent when metformin monotherapy becomes insufficient in Indian populations?
     </response>
   </example>
 </examples>
@@ -341,8 +367,9 @@ Strong evidence from multiple guidelines and systematic reviews supports metform
     try {
       // Choose model based on complexity
       const useProModel = complexityScore > 0.5 || gapAnalysis.contradictions_detected;
-      const model = useProModel ? this.proModel : this.flashModel;
-      const modelName = useProModel ? 'gemini-3.0-pro-exp' : 'gemini-3.0-flash-thinking';
+      let model = useProModel ? this.proModel : this.flashModel;
+      let fallbackModel = useProModel ? this.fallbackProModel : this.fallbackFlashModel;
+      let modelName = useProModel ? 'gemini-3-pro-preview' : 'gemini-3-flash-preview';
 
       console.log(`🤖 Using ${modelName} for synthesis (complexity: ${complexityScore.toFixed(2)})`);
 
@@ -361,12 +388,31 @@ Gap Analysis Summary:
 
 Generate synthesis (<500 words):`;
 
-      const response = await model.generateContent(prompt, {
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 1000
+      let response;
+      
+      try {
+        // Try Gemini 3.0 first
+        response = await model.generateContent(prompt, {
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 1000
+          }
+        });
+      } catch (primaryError) {
+        // If Gemini 3.0 is overloaded, fallback to 2.5
+        if (primaryError instanceof Error && primaryError.message.includes('overloaded')) {
+          console.log(`⚠️ ${modelName} overloaded, falling back to Gemini 3.0 Flash...`);
+          modelName = 'gemini-3-flash-preview';
+          response = await fallbackModel.generateContent(prompt, {
+            generationConfig: {
+              temperature: 0.2,
+              maxOutputTokens: 1000
+            }
+          });
+        } else {
+          throw primaryError;
         }
-      });
+      }
 
       const synthesisText = response.response.text();
       const latency = Date.now() - startTime;
@@ -667,17 +713,21 @@ ${item.chunk_info?.section ? `Section: ${item.chunk_info.section}` : ''}
 
   private calculateCost(modelName: string, tokens: { input: number; output: number }): number {
     const pricing = {
-      'gemini-3.0-flash-thinking-exp': {
+      'gemini-3-flash-preview': {
         input: 0.075 / 1_000_000,
         output: 0.30 / 1_000_000
       },
-      'gemini-3.0-pro-exp': {
+      'gemini-3-pro-preview': {
         input: 1.25 / 1_000_000,
         output: 5.00 / 1_000_000
+      },
+      'gemini-3-flash-preview': {
+        input: 0.075 / 1_000_000,
+        output: 0.30 / 1_000_000
       }
     };
 
-    const rate = pricing[modelName as keyof typeof pricing] || pricing['gemini-3.0-flash-thinking-exp'];
+    const rate = pricing[modelName as keyof typeof pricing] || pricing['gemini-3-flash-preview'];
     
     return tokens.input * rate.input + tokens.output * rate.output;
   }

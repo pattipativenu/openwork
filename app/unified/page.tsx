@@ -2,14 +2,9 @@
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Brain, FileText, ImageIcon, Loader2, Mic, MicOff, Search, Send, Sparkles, X, ChevronDown, ChevronRight, User, Settings, LogOut, FileIcon, PhoneCall } from 'lucide-react';
-import { useGeminiLive } from '@/hooks/useGeminiLive';
+import { Brain, FileText, ImageIcon, Loader2, Search, Send, Sparkles, X, ChevronDown, ChevronRight, User, Settings, LogOut, FileIcon } from 'lucide-react';
 import { useGemini } from "@/hooks/useGemini";
 import { parseResponseIntoSections } from "@/lib/response-parser";
-// SpeechService removed
-import { VoiceChatModal } from "@/components/ui/voice-chat-modal";
-import { Volume2 } from "lucide-react";
-import { generateSpeech } from "@/lib/voice/gemini-tts";
 import { EvidenceLogosScroll } from "@/components/ui/evidence-logos-scroll";
 import { ResponseActions } from "@/components/ui/response-actions";
 import { Sidebar } from "@/components/ui/sidebar";
@@ -184,20 +179,7 @@ function ResponseTabs({
         // I will assume I can modify ResponseActions in a separate step or just add the button alongside.
         // Let's modify ResponseActions to accept "onReadAloud".
       />
-      {/* Read Aloud Button (Temporary placement until ResponseActions updated) */}
-      <div className="flex justify-end px-4 -mt-4 mb-4">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            // Find message ID logic or just pass function
-            // Need to lift this up or pass a callback
-          }}
-          className="text-gray-400 hover:text-blue-600 p-1.5 rounded-full hover:bg-blue-50 transition-colors"
-          title="Read Aloud"
-        >
-          <Volume2 className="w-4 h-4" />
-        </button>
-      </div>
+      {/* Read Aloud Button - REMOVED */}
 
       {/* Disclaimer - placed BEFORE References */}
       <div className="p-4 bg-gray-50 border border-gray-300 rounded-xl hover:border-blue-400 hover:shadow-lg transition-all duration-300 group">
@@ -208,9 +190,9 @@ function ResponseTabs({
             </svg>
           </div>
           <div className="text-sm text-gray-600 font-ui">
-            <p className="font-semibold mb-1 text-gray-700">⚠️ AI-Generated Evidence-Based Response</p>
+            <p className="font-semibold mb-1 text-gray-700">⚠️ AI-Generated Research Synthesis</p>
             <p className="text-gray-600 leading-relaxed">
-              This response is generated using evidence from peer-reviewed literature, clinical guidelines, and medical databases. While we strive for accuracy, AI can make mistakes. Please verify critical information with primary sources and apply your clinical judgment. This is clinical decision support, not a substitute for professional medical expertise.
+              This response synthesizes evidence from peer-reviewed literature, clinical guidelines, and medical databases. While we strive for accuracy, AI can make mistakes. Please verify critical information with primary sources. This is a research tool that helps find and summarize relevant medical literature, not a substitute for professional medical expertise.
             </p>
           </div>
         </div>
@@ -464,78 +446,11 @@ export default function UnifiedDashboard() {
   const [conversationId, setConversationId] = useState<string>(() => `conv_${Date.now()}`);
   const historyRef = useRef<HTMLDivElement>(null);
 
-  // Voice Features State
-  const [showVoiceChat, setShowVoiceChat] = useState(false);
-  const [playingMessageId, setPlayingMessageId] = useState<string | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Voice Features State - REMOVED (no longer needed)
 
-  // Gemini Live is initialized later for Dictation
-  const handleReadAloud = async (text: string, messageId: string) => {
-    // If already playing this message, stop it
-    if (playingMessageId === messageId && audioRef.current) {
-      audioRef.current.pause();
-      setPlayingMessageId(null);
-      return;
-    }
+  // Gemini Live is initialized later for Dictation - REMOVED
 
-    // Stop any other playback
-    if (audioRef.current) {
-      audioRef.current.pause();
-    }
-
-    try {
-      setPlayingMessageId(messageId); // Set loading state/active state
-      const audioData = await generateSpeech(text, 'Kore');
-
-      const audio = new Audio(`data:audio/wav;base64,${audioData}`);
-      audioRef.current = audio;
-
-      audio.onended = () => {
-        setPlayingMessageId(null);
-      };
-
-      await audio.play();
-    } catch (err) {
-      console.error("Read Aloud Error:", err);
-      setPlayingMessageId(null);
-    }
-  };
-
-  // Wrapper for Voice Chat Modal to reuse existing sendMessage logic
-  const handleVoiceQuery = async (text: string): Promise<string> => {
-    // User message is added visually by the modal? 
-    // Or strictly we just want the ANSWER text for TTS?
-    // The existing sendMessage returns { response, model, ... }
-
-    // Note: We might NOT want to update 'chatHistory' immediately if the modal handles its own display,
-    // BUT the requirement is "it is just a model on top... nothing changed", so we SHOULD update history.
-
-    // We need to simulate the "thinking" steps if we want consistency, but for voice chat speed is key.
-
-    const result = await sendMessage(text, [], chatHistory, 0, isStudyMode);
-
-    if (result) {
-      // We update chat history in the main flow via the existing sendMessage side-effects?
-      // Actually sendMessage DOES NOT update state, it returns result.
-      // We need to manually update state here like handleSubmit does.
-
-      const userMsg: Message = { role: 'user', content: text, timestamp: new Date() };
-      const assistantMsg: Message = {
-        role: 'assistant',
-        content: result.response,
-        timestamp: new Date(),
-        medicalImages: result.medicalImages
-      };
-
-      setChatHistory(prev => [...prev, userMsg, assistantMsg]);
-      setCurrentResponse(result.response);
-      setModelUsed(result.model);
-      setHasSubmittedQuery(true); // Ensure UI switches to chat mode if not already
-
-      return result.response;
-    }
-    throw new Error("No response from AI");
-  };
+  // Voice Chat Modal function - REMOVED (no longer needed)
 
 
   const { sendMessage, loading, error, clearMessages } = useGemini({
@@ -703,34 +618,7 @@ export default function UnifiedDashboard() {
     };
   }, [chatHistory, sendMessage]);
 
-  // Gemini Live for Dictation (Transcription Only)
-  const {
-    isActive: isMicActive,
-    status: micStatus,
-    transcript: micTranscript,
-    connect: startMic,
-    disconnect: stopMic
-  } = useGeminiLive({
-    transcriptionOnly: true,
-    systemInstruction: "You are a transcriber. Listen to the user's medical query and transcribe it exactly. Do not answer, just return the text.",
-  });
-
-  // Sync Transcript to Query
-  useEffect(() => {
-    if (isMicActive && micTranscript) {
-      setQuery(micTranscript);
-    }
-  }, [micTranscript, isMicActive]);
-
-  const toggleMic = () => {
-    if (isMicActive) {
-      stopMic();
-    } else {
-      setQuery("");
-      startMic();
-    }
-  };
-
+  // Gemini Live for Dictation - REMOVED (no longer needed)
 
   const handleFileUpload = (files: FileList | null) => {
     if (!files) return;
@@ -967,7 +855,7 @@ export default function UnifiedDashboard() {
                   </svg>
                 </div>
                 <div>
-                  <h1 className="text-xl font-semibold text-gray-900">MedGuidance</h1>
+                  <h1 className="text-xl font-semibold text-gray-900">OpenWork</h1>
                 </div>
               </button>
             </motion.div>
@@ -1187,29 +1075,7 @@ export default function UnifiedDashboard() {
                     </div>
 
                     <div className="flex items-center gap-2">
-                      {/* Voice Features */}
-                      {mode === 'doctor' && (
-                        <>
-                          {/* Mic Button (Speech-to-Text) */}
-                          <button
-                            onClick={toggleMic}
-                            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${isMicActive ? "bg-red-500 text-white animate-pulse shadow-md ring-2 ring-red-200" : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-                              }`}
-                            title={isMicActive ? "Listening... (Auto-submits on silence)" : "Speak to Type"}
-                          >
-                            {isMicActive ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                          </button>
-
-                          {/* Voice Chat Button (Speech-to-Speech) */}
-                          <button
-                            onClick={() => setShowVoiceChat(true)}
-                            className="w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all"
-                            title="Start Voice Chat (Tara)"
-                          >
-                            <PhoneCall className="w-4 h-4" />
-                          </button>
-                        </>
-                      )}
+                      {/* Voice Features - REMOVED */}
 
                       <button
                         onClick={() => handleSubmit()}
@@ -1365,17 +1231,7 @@ export default function UnifiedDashboard() {
                                 />
                               )}
 
-                              <div className="flex justify-end mt-2">
-                                <button
-                                  onClick={() => handleReadAloud(pair.answer?.content || currentResponse, pairIndex.toString())}
-                                  className={`p-1.5 rounded-full transition-colors flex items-center gap-1.5 text-xs font-medium ${playingMessageId === pairIndex.toString()
-                                    ? "bg-blue-100 text-blue-600"
-                                    : "text-gray-400 hover:text-blue-600 hover:bg-gray-50"}`}
-                                >
-                                  <Volume2 className={`w-3.5 h-3.5 ${playingMessageId === pairIndex.toString() ? "animate-pulse" : ""}`} />
-                                  {playingMessageId === pairIndex.toString() ? "Playing..." : "Read Aloud"}
-                                </button>
-                              </div>
+                              {/* Read Aloud button - REMOVED */}
                             </div>
                           )}
                         </div>
@@ -1419,12 +1275,7 @@ export default function UnifiedDashboard() {
 
 
 
-        {/* RENDER MODAL */}
-        <VoiceChatModal
-          isOpen={showVoiceChat}
-          onClose={() => setShowVoiceChat(false)}
-          onQuery={handleVoiceQuery}
-        />
+        {/* RENDER MODAL - REMOVED */}
 
       </div>
     </div >

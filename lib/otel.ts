@@ -1,5 +1,5 @@
 /**
- * OpenTelemetry Configuration for MedGuidance-AI
+ * OpenTelemetry Configuration for OpenWork-AI
  *
  * NOTE: Observability is currently disconnected.
  * This file provides no-op stubs to maintain type compatibility.
@@ -73,7 +73,7 @@ export async function initObservability(): Promise<void> {
 /**
  * Get a tracer instance (returns dummy)
  */
-export function getTracer(name: string = "medguidance-ai") {
+export function getTracer(name: string = "openwork-ai") {
     return trace.getTracer(name);
 }
 

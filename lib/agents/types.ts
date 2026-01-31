@@ -33,6 +33,30 @@ export interface QueryAnalysis {
   };
   abbreviations_expanded: Record<string, string>;
   search_variants: string[];
+  // NEW: Sub-agent specific queries and routing decisions
+  sub_agent_queries: {
+    guidelines?: {
+      should_call: boolean;
+      rephrased_queries: string[];
+      reasoning: string;
+    };
+    pubmed?: {
+      should_call: boolean;
+      rephrased_queries: string[];
+      mesh_terms: string[];
+      reasoning: string;
+    };
+    dailymed?: {
+      should_call: boolean;
+      drug_names: string[];
+      reasoning: string;
+    };
+    tavily?: {
+      should_call: boolean;
+      original_query: string;
+      reasoning: string;
+    };
+  };
   requires_sources: {
     guidelines: boolean;
     pubmed: boolean;

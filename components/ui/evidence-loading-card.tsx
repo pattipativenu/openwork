@@ -7,24 +7,24 @@ import Image from "next/image";
 // Testimonials from medical institutions and partners
 const TESTIMONIALS = [
   {
-    quote: "MedGuidance AI is emerging as a preferred resource for many clinicians. We are delighted to support evidence-based clinical decision making.",
+    quote: "OpenWork AI is emerging as a preferred resource for many clinicians. We are delighted to support evidence synthesis and research acceleration.",
     author: "Clinical Research Team",
     organization: "National Library of Medicine",
   },
   {
-    quote: "Synthesizing evidence from 46+ medical databases, MedGuidance AI delivers comprehensive, trustworthy clinical insights in seconds.",
+    quote: "Synthesizing research from 46+ medical databases, OpenWork AI delivers comprehensive literature analysis and evidence summaries in seconds.",
     author: "Evidence-Based Medicine Initiative",
     organization: "PubMed & Cochrane Partnership",
   },
   {
-    quote: "From systematic reviews to FDA drug labels, MedGuidance AI brings the world's medical knowledge to your fingertips.",
+    quote: "From systematic reviews to FDA drug labels, OpenWork AI brings the world's medical research literature to your fingertips for analysis.",
     author: "Digital Health Innovation",
     organization: "Medical Database Consortium",
   },
   {
-    quote: "Trusted by clinicians worldwide, MedGuidance AI transforms how healthcare professionals access and synthesize medical evidence.",
+    quote: "Trusted by researchers worldwide, OpenWork AI transforms how healthcare professionals access and analyze medical literature.",
     author: "Healthcare Technology",
-    organization: "Clinical Decision Support Alliance",
+    organization: "Research Synthesis Alliance",
   },
 ];
 
@@ -218,10 +218,10 @@ export function EvidenceLoadingCard({ isLoading, currentStep, mode = 'doctor' }:
               ))}
             </AnimatePresence>
             
-            {/* MedGuidance AI Logo/Text - Styled to match welcome banner */}
+            {/* OpenWork AI Logo/Text - Styled to match welcome banner */}
             <div className="flex items-center gap-2 pl-6 border-l-2 border-gray-300">
               <div className="flex items-baseline gap-1">
-                <span className="text-xl font-bold text-gray-900 tracking-tight">MedGuidance</span>
+                <span className="text-xl font-bold text-gray-900 tracking-tight">OpenWork</span>
                 <span className="text-base font-bold text-amber-600">AI</span>
               </div>
             </div>

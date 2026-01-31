@@ -19,8 +19,8 @@ export class EvidenceNormalizer {
       const candidate: EvidenceCandidate = {
         source: 'indian_guideline',
         id: doc.chunk_id,
-        title: doc.title,
-        text: doc.text,
+        title: doc.title || 'Untitled Guideline',
+        text: doc.text || 'No content available',
         metadata: {
           organization: doc.organization,
           year: doc.year,
@@ -52,8 +52,8 @@ export class EvidenceNormalizer {
         const candidate: EvidenceCandidate = {
           source: 'pubmed',
           id: pmid,
-          title: doc.title,
-          text: doc.abstract,
+          title: doc.title || 'Untitled PubMed Article',
+          text: doc.abstract || 'No abstract available',
           metadata: {
             authors: doc.authors,
             journal: doc.journal,
@@ -119,8 +119,8 @@ export class EvidenceNormalizer {
         const candidate: EvidenceCandidate = {
           source: 'clinical_trials',
           id: nctId,
-          title: doc.title || doc.brief_title,
-          text: doc.brief_summary || doc.detailed_description || doc.summary,
+          title: doc.title || doc.brief_title || 'Untitled Clinical Trial',
+          text: doc.brief_summary || doc.detailed_description || doc.summary || 'No summary available',
           metadata: {
             phase: doc.phase,
             status: doc.status,
@@ -146,8 +146,8 @@ export class EvidenceNormalizer {
         const candidate: EvidenceCandidate = {
           source: 'cochrane',
           id: cochraneId,
-          title: doc.title,
-          text: doc.abstract || doc.plain_language_summary,
+          title: doc.title || 'Untitled Cochrane Review',
+          text: doc.abstract || doc.plain_language_summary || 'No abstract available',
           metadata: {
             authors: doc.authors,
             publication_date: doc.publication_date,
@@ -171,8 +171,8 @@ export class EvidenceNormalizer {
         const candidate: EvidenceCandidate = {
           source: 'bmj_best_practice',
           id: bmjId,
-          title: doc.title,
-          text: doc.summary || doc.content,
+          title: doc.title || 'Untitled BMJ Article',
+          text: doc.summary || doc.content || 'No content available',
           metadata: {
             topic: doc.topic,
             last_updated: doc.last_updated,
@@ -209,8 +209,8 @@ export class EvidenceNormalizer {
           const candidate: EvidenceCandidate = {
             source: sourceConfig.key as EvidenceCandidate['source'],
             id: docId,
-            title: doc.title,
-            text: doc.abstract || doc.summary || doc.content || doc.text,
+            title: doc.title || 'Untitled',
+            text: doc.abstract || doc.summary || doc.content || doc.text || doc.description || 'No content available',
             metadata: {
               ...doc,
               badges: sourceConfig.badges
@@ -232,8 +232,8 @@ export class EvidenceNormalizer {
         const candidate: EvidenceCandidate = {
           source: 'tavily_web',
           id: url,
-          title: doc.title,
-          text: doc.content,
+          title: doc.title || 'Untitled Web Content',
+          text: doc.content || 'No content available',
           metadata: {
             url: url,
             score: doc.score,
