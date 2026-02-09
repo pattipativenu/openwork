@@ -5,21 +5,21 @@
  * Triggers Tavily search if gaps detected
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { RankedEvidence, EvidenceGapAnalysis, TraceContext, AgentResult } from './types';
-import { logAgent } from '../observability/arize-client';
+import { withToolSpan, SpanStatusCode, captureTokenUsage } from '../otel';
 import { MultiSourceRetrievalCoordinator } from './multi-source-retrieval';
+import { callGeminiWithRetry } from '../utils/gemini-rate-limiter';
 
 export class EvidenceGapAnalyzer {
-  private genAI: GoogleGenerativeAI;
-  private model: any;
+  private genAI: GoogleGenAI;
+  private modelName: string;
+  private systemPrompt: string;
 
   constructor(apiKey: string) {
-    this.genAI = new GoogleGenerativeAI(apiKey);
-    this.model = this.genAI.getGenerativeModel({ 
-      model: process.env.GEMINI_PRO_MODEL || 'gemini-3-pro-preview',
-      systemInstruction: this.getSystemPrompt()
-    });
+    this.genAI = new GoogleGenAI({ apiKey });
+    this.modelName = process.env.GEMINI_PRO_MODEL || 'gemini-3-pro-preview';
+    this.systemPrompt = this.getSystemPrompt();
   }
 
   private getSystemPrompt(): string {
@@ -325,7 +325,12 @@ export class EvidenceGapAnalyzer {
     traceContext: TraceContext,
     retriever?: MultiSourceRetrievalCoordinator
   ): Promise<{ analysis: EvidenceGapAnalysis; updatedEvidence: RankedEvidence[] }> {
-    const startTime = Date.now();
+    return await withToolSpan('evidence_gap_analyzer', 'execute', async (span) => {
+      const startTime = Date.now();
+
+      // Set input attributes
+      span.setAttribute('agent.input', JSON.stringify({ query, num_sources: evidencePack.length }));
+      span.setAttribute('agent.name', 'evidence_gap_analyzer');
 
     try {
       // Format evidence for analysis
@@ -338,60 +343,55 @@ ${evidenceSummary}
 
 Output JSON:`;
 
-      const response = await this.model.generateContent(prompt, {
-        generationConfig: {
-          temperature: 0.2,
-          responseMimeType: "application/json"
-        }
+      // CRITICAL FIX: Use rate limiter with multi-key support
+      const response = await callGeminiWithRetry(async (apiKey: string) => {
+        const genAI = new GoogleGenAI({ apiKey });
+        return await genAI.models.generateContent({
+          model: this.modelName,
+          contents: prompt,
+          config: {
+            systemInstruction: this.systemPrompt,
+            temperature: 0.2,
+            responseMimeType: "application/json",
+            thinkingConfig: {
+              thinkingLevel: ThinkingLevel.LOW // Reduced from HIGH to save latency
+            }
+          }
+        });
       });
 
       let analysis: EvidenceGapAnalysis;
       try {
-        const responseText = response.response.text();
-        
-        // Handle Gemini 3.0 thinking models that might wrap JSON in markdown
-        let jsonText = responseText;
-        if (responseText.includes('```json')) {
-          const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/);
-          if (jsonMatch) {
-            jsonText = jsonMatch[1];
-          }
-        } else if (responseText.includes('```')) {
-          const jsonMatch = responseText.match(/```\s*([\s\S]*?)\s*```/);
-          if (jsonMatch) {
-            jsonText = jsonMatch[1];
-          }
-        }
-        
+        const responseText = response.text || '';
+        const jsonText = this.cleanJsonOutput(responseText);
         analysis = JSON.parse(jsonText) as EvidenceGapAnalysis;
       } catch (parseError) {
-        console.warn('⚠️ JSON parsing failed, using fallback analysis');
-        // Fallback analysis with all required EvidenceGapAnalysis fields
+        console.warn('⚠️ JSON parsing failed, using conservative fallback analysis:', parseError);
+        // Conservative fallback: trigger additional search since we couldn't assess quality
         analysis = {
           assessment: 'partial',
-          coverage_score: 0.7,
-          recency_concerns: false,
-          oldest_source_year: new Date().getFullYear() - 5, // Default to 5 years ago
+          coverage_score: 0.5,
+          recency_concerns: true,
+          oldest_source_year: new Date().getFullYear() - 5,
           quality_distribution: {
             guidelines: 0,
             rcts: 0,
-            observational: 0,
+            observational: evidencePack.length,
             reviews: 0
           },
           contradictions_detected: false,
-          contradiction_summary: undefined,
-          missing_elements: ['Unable to parse detailed analysis'],
-          recommendation: 'proceed'
-        };
+          missing_elements: ['Analysis parsing failed — triggering supplementary search'],
+          recommendation: 'search_specific_gap'
+        } as EvidenceGapAnalysis;
       }
       
       const latency = Date.now() - startTime;
 
       // Calculate cost
       const tokens = {
-        input: response.response.usageMetadata?.promptTokenCount || 2000,
-        output: response.response.usageMetadata?.candidatesTokenCount || 500,
-        total: response.response.usageMetadata?.totalTokenCount || 2500
+        input: response.usageMetadata?.promptTokenCount || 2000,
+        output: response.usageMetadata?.candidatesTokenCount || 500,
+        total: response.usageMetadata?.totalTokenCount || 2500
       };
 
       const cost = this.calculateCost(tokens);
@@ -402,14 +402,36 @@ Output JSON:`;
 
       let updatedEvidence = evidencePack;
 
-      // Trigger Tavily if gap detected and retriever available
-      if ((analysis.recommendation === 'search_recent' || analysis.recommendation === 'search_specific_gap') && retriever) {
+      // CRITICAL FIX: Only call Tavily if PubMed results are truly insufficient
+      // Check if we have PubMed sources - if yes, be more conservative about calling Tavily
+      const hasPubMedSources = evidencePack.some(e => e.source === 'pubmed');
+      const pubmedCount = evidencePack.filter(e => e.source === 'pubmed').length;
+
+      // #region debug log
+      fetch('http://127.0.0.1:7243/ingest/7927b0b4-4494-4712-9407-b89fa1704153', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'evidence-gap-analyzer.ts:400', message: 'Gap analysis Tavily decision', data: { recommendation: analysis.recommendation, coverage: analysis.coverage_score, hasPubMed: hasPubMedSources, pubmedCount, evidenceCount: evidencePack.length, willCallTavily: (analysis.recommendation === 'search_recent' || analysis.recommendation === 'search_specific_gap') && retriever && (!hasPubMedSources || pubmedCount < 3), timestamp: Date.now() }, timestamp: Date.now() }) }).catch(() => { });
+      // #endregion
+
+      // Trigger Tavily ONLY if:
+      // 1. Gap detected AND
+      // 2. No PubMed sources OR very few PubMed sources (<3) OR coverage is very low (<0.4)
+      const shouldCallTavily = (analysis.recommendation === 'search_recent' || analysis.recommendation === 'search_specific_gap')
+        && retriever
+        && (!hasPubMedSources || pubmedCount < 3 || analysis.coverage_score < 0.4);
+
+      if (shouldCallTavily) {
         const searchType = analysis.recommendation === 'search_recent' ? 'recent evidence' : 'specific gaps';
-        console.log(`🌐 Triggering Tavily search for ${searchType}...`);
+        console.log(`🌐 Triggering Tavily search for ${searchType}... (PubMed sources: ${pubmedCount}, coverage: ${Math.round(analysis.coverage_score * 100)}%)`);
         
-        const tavilyQuery = analysis.recommendation === 'search_recent' 
-          ? `${query} recent 2024 2025 latest`
-          : `${query} ${analysis.missing_elements?.join(' ') || 'guidelines recommendations'}`;
+        // SMART QUERY RESTRUCTURING for Tavily (must be <420 chars)
+        // Agent 5 is responsible for creating concise, targeted queries
+        const isGuidelineGap = analysis.missing_elements.some(e => e.toLowerCase().includes('guideline'));
+
+        const tavilyQuery = this.buildTavilyQuery(
+          query,
+          analysis.recommendation,
+          analysis.missing_elements || [],
+          isGuidelineGap
+        );
         
         const existingUrls = new Set(
           evidencePack
@@ -444,11 +466,15 @@ Output JSON:`;
 
             // Append to evidence pack
             updatedEvidence = [...evidencePack, ...tavilyEvidence];
+          } else {
+            console.log(`⚠️ Tavily search returned no results - continuing with PubMed evidence only`);
           }
         } catch (tavilyError) {
           console.error('❌ Tavily search failed:', tavilyError);
           // Continue with original evidence
         }
+      } else if ((analysis.recommendation === 'search_recent' || analysis.recommendation === 'search_specific_gap') && hasPubMedSources && pubmedCount >= 3) {
+        console.log(`✅ Skipping Tavily - sufficient PubMed sources (${pubmedCount} articles) with ${Math.round(analysis.coverage_score * 100)}% coverage`);
       }
 
       const result: AgentResult<EvidenceGapAnalysis> = {
@@ -459,15 +485,16 @@ Output JSON:`;
         cost_usd: cost
       };
 
-      // Log to Arize
-      await logAgent(
-        'evidence_gap_analyzer',
-        traceContext,
-        { query, num_sources: evidencePack.length },
-        analysis,
-        result,
-        'gemini-3-pro-preview'
-      );
+      // Set span attributes
+      span.setAttribute('agent.output', JSON.stringify(analysis));
+      span.setAttribute('agent.latency_ms', latency);
+      span.setAttribute('agent.cost_usd', cost);
+      span.setAttribute('agent.model_name', 'gemini-3-pro-preview');
+      span.setAttribute('agent.success', true);
+      span.setAttribute('gap_analysis.coverage_score', analysis.coverage_score);
+      span.setAttribute('gap_analysis.contradictions_detected', analysis.contradictions_detected);
+      span.setAttribute('gap_analysis.missing_elements_count', analysis.missing_elements.length);
+      captureTokenUsage(span, tokens, 'gemini-3-pro-preview');
 
       return { analysis, updatedEvidence };
 
@@ -482,21 +509,20 @@ Output JSON:`;
         latency_ms: latency
       };
 
-      await logAgent(
-        'evidence_gap_analyzer',
-        traceContext,
-        { query, num_sources: evidencePack.length },
-        { error: result.error },
-        result,
-        'gemini-3-pro-preview'
-      );
+      // Set error attributes
+      span.setAttribute('agent.success', false);
+      span.setAttribute('agent.error', result.error || 'Unknown error');
+      span.setAttribute('agent.latency_ms', latency);
+      span.recordException(error as Error);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: result.error || 'Unknown error' });
 
-      // Return default analysis to continue pipeline
+      // Conservative default: when analysis fails, trigger supplementary search
+      // rather than blindly proceeding with potentially insufficient evidence
       const defaultAnalysis: EvidenceGapAnalysis = {
         assessment: 'partial',
-        coverage_score: 0.7,
-        recency_concerns: false,
-        oldest_source_year: 2020,
+        coverage_score: 0.5,
+        recency_concerns: true,
+        oldest_source_year: new Date().getFullYear() - 5,
         quality_distribution: {
           guidelines: 0,
           rcts: 0,
@@ -504,12 +530,38 @@ Output JSON:`;
           reviews: 0
         },
         contradictions_detected: false,
-        missing_elements: [],
-        recommendation: 'proceed'
+        missing_elements: ['Gap analysis failed — supplementary search recommended'],
+        recommendation: 'search_specific_gap'
       };
 
       return { analysis: defaultAnalysis, updatedEvidence: evidencePack };
     }
+    });
+  }
+
+  private cleanJsonOutput(text: string): string {
+    let clean = text.trim();
+
+    // 1. Handle "FINAL JSON OUTPUT:" marker
+    if (clean.includes('FINAL JSON OUTPUT:')) {
+      clean = clean.split('FINAL JSON OUTPUT:')[1].trim();
+    }
+
+    // 2. Remove markdown code blocks
+    const codeBlockMatch = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (codeBlockMatch) {
+      clean = codeBlockMatch[1].trim();
+    }
+
+    // 3. Strip surrounding text
+    const firstBrace = clean.indexOf('{');
+    const lastBrace = clean.lastIndexOf('}');
+
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      clean = clean.substring(firstBrace, lastBrace + 1);
+    }
+
+    return clean;
   }
 
   private formatEvidence(evidencePack: RankedEvidence[]): string {
@@ -554,5 +606,62 @@ Text Preview: ${(item.text || item.title || 'No content available').substring(0,
     const inputCost = (tokens.input / 1_000_000) * 1.25;
     const outputCost = (tokens.output / 1_000_000) * 5.00;
     return inputCost + outputCost;
+  }
+
+  /**
+   * Build a concise Tavily query under 420 characters
+   * Agent 5 is responsible for restructuring queries for Tavily
+   * Strategy:
+   * 1. Start with the core query (first 200 chars max)
+   * 2. Add temporal markers for recency searches
+   * 3. Add top 2-3 missing elements for gap searches
+   * 4. Ensure total length stays under 420 chars
+   */
+  private buildTavilyQuery(
+    originalQuery: string,
+    recommendation: string,
+    missingElements: string[],
+    isGuidelineGap: boolean = false
+  ): string {
+    const MAX_LENGTH = 400; // Leave 20 char buffer
+
+    // Extract core medical terms from query (limit to ~150 chars)
+    let coreQuery = originalQuery.trim();
+    if (coreQuery.length > 150) {
+      // Find last space before 150 chars to avoid word cutoff
+      const cutoff = coreQuery.lastIndexOf(' ', 150);
+      coreQuery = coreQuery.substring(0, cutoff > 100 ? cutoff : 150);
+    }
+
+    let tavilyQuery = coreQuery;
+
+    if (isGuidelineGap) {
+      // ENHANCEMENT: Explicitly target global guidelines if missing
+      // Agent 2.1 covers Indian guidelines; Agent 5 fills the gap for Global/US/UK
+      tavilyQuery += ' guidelines (ADA OR NICE OR ESC OR AHA OR WHO)';
+    } else if (recommendation === 'search_recent') {
+      // For recency searches, add temporal markers
+      const currentYear = new Date().getFullYear();
+      tavilyQuery += ` latest ${currentYear - 1} ${currentYear}`;
+    } else if (recommendation === 'search_specific_gap') {
+      // For gap searches, add top 2-3 missing elements
+      const topMissing = missingElements
+        .slice(0, 3)
+        .map(el => el.length > 30 ? el.substring(0, 30) : el)
+        .join(' ');
+
+      if (topMissing && (tavilyQuery.length + topMissing.length + 1) < MAX_LENGTH) {
+        tavilyQuery += ' ' + topMissing;
+      }
+    }
+
+    // Final safety check
+    if (tavilyQuery.length > MAX_LENGTH) {
+      const lastSpace = tavilyQuery.lastIndexOf(' ', MAX_LENGTH);
+      tavilyQuery = tavilyQuery.substring(0, lastSpace > MAX_LENGTH * 0.7 ? lastSpace : MAX_LENGTH);
+    }
+
+    console.log(`🔧 Built Tavily query (${tavilyQuery.length} chars): "${tavilyQuery}"`);
+    return tavilyQuery.trim();
   }
 }

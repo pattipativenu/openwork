@@ -7,12 +7,12 @@ import Image from "next/image";
 // Testimonials from medical institutions and partners
 const TESTIMONIALS = [
   {
-    quote: "OpenWork AI is emerging as a preferred resource for many clinicians. We are delighted to support evidence synthesis and research acceleration.",
+    quote: "OpenWork AI synthesizes medical literature from PubMed, DailyMed, Cochrane Library, Europe PMC, etc. into comprehensive research summaries. A powerful tool for evidence-based literature review and analysis.",
     author: "Clinical Research Team",
     organization: "National Library of Medicine",
   },
   {
-    quote: "Synthesizing research from 46+ medical databases, OpenWork AI delivers comprehensive literature analysis and evidence summaries in seconds.",
+    quote: "Synthesizing research from PubMed Central, FDA databases, clinical guidelines, systematic reviews, etc., OpenWork AI delivers comprehensive literature analysis and evidence summaries in seconds.",
     author: "Evidence-Based Medicine Initiative",
     organization: "PubMed & Cochrane Partnership",
   },
@@ -22,7 +22,7 @@ const TESTIMONIALS = [
     organization: "Medical Database Consortium",
   },
   {
-    quote: "Trusted by researchers worldwide, OpenWork AI transforms how healthcare professionals access and analyze medical literature.",
+    quote: "OpenWork AI accelerates literature review by synthesizing peer-reviewed research from PubMed, clinical guidelines, DailyMed, Europe PMC, etc. into cited, evidence-based summaries.",
     author: "Healthcare Technology",
     organization: "Research Synthesis Alliance",
   },
@@ -270,7 +270,7 @@ export function EvidenceLoadingCompact({ isLoading }: { isLoading: boolean }) {
             {currentSource.name}
           </motion.span>
         </AnimatePresence>
-        <span className="text-sm text-amber-800">and 56+ databases...</span>
+        <span className="text-sm text-amber-800">and 45+ medical databases...</span>
       </div>
     </motion.div>
   );

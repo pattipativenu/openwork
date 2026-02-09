@@ -1,24 +1,22 @@
-import { GoogleGenerativeAI, GenerationConfig } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 
-const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+const apiKey = process.env.GEMINI_API_KEY;
 
 if (!apiKey) {
-  console.error("GOOGLE_GENERATIVE_AI_API_KEY is not set in environment variables");
+  console.error("GEMINI_API_KEY is not set in environment variables");
 }
 
-export const genAI = new GoogleGenerativeAI(apiKey || "");
+export const genAI = new GoogleGenAI({ apiKey: apiKey || "" });
 
-// Model mappings based on user request "Gemini 3 Flash/Pro"
-// Using Gemini 2.0 Experimental models as the latest available versions matching the request intent
-export const GEMINI_FLASH_MODEL = "gemini-2.0-flash-exp";
-export const GEMINI_PRO_MODEL = "gemini-2.0-pro-exp";
+// Model mappings - Gemini 3 only (Google AI Studio / Hackathon)
+export const GEMINI_FLASH_MODEL = "gemini-3-flash-preview";
+export const GEMINI_PRO_MODEL = "gemini-3-pro-preview";
 
-export const generationConfig: GenerationConfig = {
+export const defaultGenerationConfig = {
   temperature: 0.7,
   topP: 0.95,
   topK: 40,
   maxOutputTokens: 8192,
-  responseMimeType: "text/plain",
 };
 
 /**
@@ -31,16 +29,16 @@ export async function generateJSON<T = any>(
   temperature: number = 0.1
 ): Promise<T> {
   try {
-    const model = genAI.getGenerativeModel({
+    const result = await genAI.models.generateContent({
       model: modelName,
-      generationConfig: {
+      contents: prompt,
+      config: {
         responseMimeType: "application/json",
         temperature,
       }
     });
 
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
+    const text = result.text || '';
     return JSON.parse(text) as T;
   } catch (error) {
     console.error("Gemini JSON generation error:", error);

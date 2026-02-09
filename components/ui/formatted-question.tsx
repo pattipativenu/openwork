@@ -17,20 +17,20 @@ export function FormattedQuestion({ content, className = "" }: FormattedQuestion
   const formattedContent = formatClinicalQuestion(content);
   
   return (
-    <div className={`formatted-question ${className}`}>
+    <div className={`p-6 md:p-8 bg-white border border-gray-200 rounded-2xl shadow-[0_4px_20px_rgb(0,0,0,0.03)] mb-4 ${className}`}>
       {formattedContent.map((segment, index) => (
         <React.Fragment key={index}>
           {segment.type === "main" && (
-            <p className="question-main">{segment.text}</p>
+            <p className="text-lg text-gray-900 font-medium leading-relaxed">{segment.text}</p>
           )}
           {segment.type === "section" && (
-            <p className="question-section">
-              <span className="section-label">{segment.label}:</span>{" "}
-              <span className="section-content">{segment.text}</span>
+            <p className="mt-4 text-[15px] text-gray-700 leading-relaxed">
+              <span className="font-bold text-gray-900">{segment.label}:</span>{" "}
+              {segment.text}
             </p>
           )}
           {segment.type === "question" && (
-            <p className="question-prompt">{segment.text}</p>
+            <p className="mt-4 text-lg text-blue-700 font-semibold italic leading-relaxed">{segment.text}</p>
           )}
         </React.Fragment>
       ))}

@@ -88,8 +88,9 @@ export function getStudyModePrompt(): string {
         }
       ],
       "followUpQuestions": [
-        "A follow-up question that dives deeper into the topic?",
-        "Another complex scenario-based question to challenge the user?"
+        "First detailed follow-up question related to the original query?",
+        "Second detailed follow-up question related to the original query?",
+        "Third detailed follow-up question related to the original query?"
       ]
     }
   </output_format>

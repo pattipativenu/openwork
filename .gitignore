@@ -186,11 +186,5 @@ Thumbs.db
 *.bak
 *~
 
-# Phoenix AI observability
-.phoenix/
-
-# Arize AI
-.arize/
-
 # Local development
 .local/

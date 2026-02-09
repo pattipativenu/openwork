@@ -86,7 +86,7 @@ export function UnifiedCitationRenderer({
           <div key={index} className="mb-5">
             {/* Paragraph text */}
             <ReactMarkdown
-              rehypePlugins={[rehypeRaw]}
+              rehypePlugins={[rehypeRaw as any]}
               components={{
                 // Inline elements - no wrapping
                 p: ({ children }) => <span className="inline">{children}</span>,

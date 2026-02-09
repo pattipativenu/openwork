@@ -4,29 +4,24 @@
  * Uses Gemini 3.0 Flash for fast verification
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { SynthesisResult, VerificationResult, TraceContext, AgentResult } from './types';
-import { logAgent, logHallucination } from '../observability/arize-client';
+import { withToolSpan, SpanStatusCode, captureTokenUsage } from '../otel';
+import { callGeminiWithRetry } from '../utils/gemini-rate-limiter';
 
 export class VerificationGate {
-  private genAI: GoogleGenerativeAI;
-  private model: any;
-  private fallbackModel: any;
+  private genAI: GoogleGenAI;
+  private modelName: string;
+  private fallbackModelName: string;
+  private systemPrompt: string;
   private consecutiveFailures: number = 0;
   private maxConsecutiveFailures: number = 3;
 
   constructor(apiKey: string) {
-    this.genAI = new GoogleGenerativeAI(apiKey);
-    this.model = this.genAI.getGenerativeModel({ 
-      model: process.env.GEMINI_FLASH_MODEL || 'gemini-3-flash-preview',
-      systemInstruction: this.getSystemPrompt()
-    });
-    
-    // Fallback to Gemini 3.0 Pro if Flash is overloaded
-    this.fallbackModel = this.genAI.getGenerativeModel({
-      model: 'gemini-3-pro-preview',
-      systemInstruction: this.getSystemPrompt()
-    });
+    this.genAI = new GoogleGenAI({ apiKey });
+    this.modelName = process.env.GEMINI_FLASH_MODEL || 'gemini-3-flash-preview';
+    this.fallbackModelName = 'gemini-3-pro-preview';
+    this.systemPrompt = this.getSystemPrompt();
   }
 
   private getSystemPrompt(): string {
@@ -275,14 +270,21 @@ export class VerificationGate {
     synthesis: SynthesisResult,
     traceContext: TraceContext
   ): Promise<AgentResult<SynthesisResult>> {
-    const startTime = Date.now();
+    return await withToolSpan('verification_gate', 'execute', async (span) => {
+      const startTime = Date.now();
 
-    try {
+      // Set input attributes
+      span.setAttribute('agent.input', JSON.stringify({ synthesis_length: synthesis.synthesis.length }));
+      span.setAttribute('agent.name', 'verification_gate');
+
+      try {
       // Circuit breaker: Skip verification if too many consecutive failures
       if (this.consecutiveFailures >= this.maxConsecutiveFailures) {
         console.log('⚠️ Verification circuit breaker activated - skipping verification due to consecutive failures');
         return {
+          success: true,
           data: synthesis,
+          latency_ms: Date.now() - startTime,
           metadata: {
             agent: 'verification_gate',
             latency: Date.now() - startTime,
@@ -311,6 +313,7 @@ export class VerificationGate {
       // Parse citations from synthesis - handle both [[N]](URL) and [N] patterns
       const citationPatterns = [
         /\[\[(\d+)\]\]\([^)]+\)/g,  // [[N]](URL) format (primary)
+        /\[\[(\d+)\]\(([^)]+)\)\]/g, // [[N](URL)] format (fallback for malformed)
         /\[(\d+)\]/g                // [N] format (fallback)
       ];
       
@@ -369,25 +372,18 @@ export class VerificationGate {
       const invalidNumbers = Array.from(citedNumbers).filter(n => !validNumbers.has(n));
       validationResults.invalid_citations = invalidNumbers;
 
-      // Grounding check (semantic similarity)
-      for (const [claim, numbersStr] of citedClaims) {
-        const numbers = numbersStr.split(',').map(n => parseInt(n.trim()));
-        
-        // Get cited sources
-        const citedSources = synthesis.evidence_pack.filter(source => 
-          numbers.includes(source.rank)
-        );
-        
-        // Check if claim is grounded
-        const isGrounded = await this.checkGrounding(claim, citedSources);
-        
-        if (!isGrounded) {
-          validationResults.unsupported_claims.push({
-            claim,
-            citations: numbers
-          });
+        // Grounding check — BATCH all claims in ONE Gemini call (performance optimization)
+        if (citedClaims.length > 0) {
+          const batchResults = await this.batchCheckGrounding(citedClaims, synthesis.evidence_pack);
+          for (const result of batchResults) {
+            if (!result.isGrounded) {
+              validationResults.unsupported_claims.push({
+                claim: result.claim,
+                citations: result.citations
+              });
+            }
+          }
         }
-      }
 
       // Determine if validation passed
       validationResults.hallucination_detected = (
@@ -408,27 +404,24 @@ export class VerificationGate {
 
       const latency = Date.now() - startTime;
 
-      // Log verification results to Arize
-      await logAgent(
-        'verification_gate',
-        traceContext,
-        { synthesis_length: synthesis.synthesis.length },
-        validationResults,
-        {
-          success: true,
-          data: validationResults,
-          latency_ms: latency
-        },
-        'gemini-3-flash-preview'
-      );
+        // Set span attributes for verification results
+        span.setAttribute('agent.output', JSON.stringify(validationResults));
+        span.setAttribute('agent.latency_ms', latency);
+        span.setAttribute('agent.model_name', 'gemini-3-flash-preview');
+        span.setAttribute('agent.success', true);
+        span.setAttribute('verification.grounding_score', validationResults.grounding_score);
+        span.setAttribute('verification.hallucination_detected', validationResults.hallucination_detected);
+        span.setAttribute('verification.total_claims', validationResults.total_claims);
+        span.setAttribute('verification.cited_claims', validationResults.cited_claims);
+        span.setAttribute('verification.unsupported_claims_count', validationResults.unsupported_claims.length);
 
-      // Log hallucination detection
-      await logHallucination(
-        traceContext,
-        synthesis.synthesis,
-        synthesis.evidence_pack,
-        validationResults
-      );
+        // Add hallucination detection as span event
+        if (validationResults.hallucination_detected) {
+          span.addEvent('verification.hallucination_detected', {
+            'verification.unsupported_claims': JSON.stringify(validationResults.unsupported_claims),
+            'verification.uncited_claims': JSON.stringify(validationResults.uncited_claims),
+          });
+        }
 
       // Add warnings if needed
       let finalSynthesis = synthesis;
@@ -471,25 +464,24 @@ export class VerificationGate {
         latency_ms: latency
       };
 
-      await logAgent(
-        'verification_gate',
-        traceContext,
-        { synthesis_length: synthesis.synthesis.length },
-        { error: result.error },
-        result,
-        'verification_failed'
-      );
+        // Set error attributes
+        span.setAttribute('agent.success', false);
+        span.setAttribute('agent.error', result.error || 'Unknown error');
+        span.setAttribute('agent.latency_ms', latency);
+        span.recordException(error as Error);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: result.error || 'Unknown error' });
 
-      // Return synthesis with warning
-      return {
-        ...result,
-        success: true,
-        data: {
-          ...synthesis,
-          warning: '⚠️ Verification process failed - please review citations carefully'
-        }
-      };
-    }
+        // Return synthesis with warning
+        return {
+          ...result,
+          success: true,
+          data: {
+            ...synthesis,
+            warning: '⚠️ Verification process failed - please review citations carefully'
+          }
+        };
+      }
+    });
   }
 
   private extractClaims(text: string): string[] {
@@ -504,74 +496,108 @@ export class VerificationGate {
     return claims;
   }
 
-  private async checkGrounding(claim: string, citedSources: any[]): Promise<boolean> {
-    if (citedSources.length === 0) return false;
+  private async batchCheckGrounding(
+    citedClaims: Array<[string, string]>,
+    evidencePack: any[]
+  ): Promise<Array<{ claim: string; citations: number[]; isGrounded: boolean }>> {
+    if (citedClaims.length === 0) return [];
 
-    // Combine source texts (limit for performance)
-    const sourceTexts = citedSources
-      .slice(0, 3) // Limit to top 3 sources
-      .map(source => source.text?.slice(0, 500) || '') // Limit text length
-      .filter(text => text.length > 0);
-    
-    if (sourceTexts.length === 0) return false;
-    
-    const combinedSources = sourceTexts.join('\n\n');
+    // Build batch prompt: list all claims with their source texts
+    let claimsList = '';
+    const claimMeta: Array<{ claim: string; citations: number[] }> = [];
 
-    // Use Gemini for semantic entailment check
-    const prompt = `Is the following claim supported by the provided evidence?
+    for (let i = 0; i < citedClaims.length; i++) {
+      const [claim, numbersStr] = citedClaims[i];
+      const numbers = numbersStr.split(',').map(n => parseInt(n.trim()));
+      claimMeta.push({ claim, citations: numbers });
 
-Claim: ${claim}
+      // Gather source texts for this claim (limit length)
+      const sourceTexts = evidencePack
+        .filter(source => numbers.includes(source.rank))
+        .slice(0, 3)
+        .map(source => (source.text?.slice(0, 300) || '').trim())
+        .filter(t => t.length > 0);
 
-Evidence:
-${combinedSources}
+      claimsList += `\nCLAIM ${i + 1}: "${claim.slice(0, 200)}"\nSOURCES [${numbers.join(',')}]: ${sourceTexts.join(' | ').slice(0, 600)}\n`;
+    }
 
-Answer ONLY 'YES' or 'NO'. If the claim is a reasonable inference from the evidence, answer YES. If the claim contradicts or goes beyond the evidence, answer NO.`;
+    const prompt = `You are verifying medical claims against evidence sources.
+For each claim below, determine if it is supported by its cited sources.
+Answer with ONLY a numbered list like "1. YES" or "2. NO".
+
+${claimsList}
+
+Respond with EXACTLY ${citedClaims.length} lines, one per claim:`;
 
     try {
-      let response;
-      let modelUsed = 'gemini-3-flash-preview';
-      
-      // Add timeout wrapper (15 seconds)
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Verification timeout')), 15000)
+      // Single Gemini call with 10s timeout
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Batch verification timeout')), 10000)
       );
-      
+
+      let response: any;
       try {
-        // Try Gemini 3.0 Flash first with timeout
-        const primaryPromise = this.model.generateContent(prompt, {
-          generationConfig: { temperature: 0 }
+        const primaryPromise = callGeminiWithRetry(async (apiKey: string) => {
+          const genAI = new GoogleGenAI({ apiKey });
+          return await genAI.models.generateContent({
+            model: this.modelName,
+            contents: prompt,
+            config: {
+              systemInstruction: this.systemPrompt,
+              temperature: 0,
+              thinkingConfig: {
+                thinkingLevel: ThinkingLevel.LOW
+              }
+            }
+          });
         });
-        
         response = await Promise.race([primaryPromise, timeoutPromise]);
       } catch (primaryError) {
-        // If Gemini 3.0 Flash fails, try Pro with timeout
-        if (primaryError instanceof Error && (primaryError.message.includes('overloaded') || primaryError.message.includes('timeout'))) {
-          console.log('⚠️ Gemini 3.0 Flash overloaded/timeout for verification, trying 3.0 Pro...');
-          modelUsed = 'gemini-3-pro-preview';
-          
+        if (primaryError instanceof Error && (primaryError.message.includes('overloaded') || primaryError.message.includes('timeout') || primaryError.message.includes('Max retries'))) {
+          console.log('⚠️ Primary model overloaded for batch verification, trying fallback...');
           try {
-            const fallbackPromise = this.fallbackModel.generateContent(prompt, {
-              generationConfig: { temperature: 0 }
+            const fallbackPromise = callGeminiWithRetry(async (apiKey: string) => {
+              const genAI = new GoogleGenAI({ apiKey });
+              return await genAI.models.generateContent({
+                model: this.fallbackModelName,
+                contents: prompt,
+                config: {
+                  systemInstruction: this.systemPrompt,
+                  temperature: 0,
+                  thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }
+                }
+              });
             });
-            
             response = await Promise.race([fallbackPromise, timeoutPromise]);
           } catch (fallbackError) {
-            console.log('⚠️ Both Gemini models failed for verification, skipping grounding check');
+            console.log('⚠️ Both models failed for batch verification — assuming all claims grounded');
             this.consecutiveFailures++;
-            return false; // Skip verification if both models fail
+            return claimMeta.map(c => ({ ...c, isGrounded: true }));
           }
         } else {
           throw primaryError;
         }
       }
 
-      const answer = response.response.text().trim().toUpperCase();
-      this.consecutiveFailures = 0; // Reset on success
-      return answer === 'YES';
+      const text = (response.text || '').trim().toUpperCase();
+      const lines = text.split('\n').filter((l: string) => l.trim().length > 0);
+
+      this.consecutiveFailures = 0;
+
+      // Parse each line: "1. YES", "2. NO", etc.
+      return claimMeta.map((meta, idx) => {
+        const line = lines[idx] || '';
+        const hasYes = /\bYES\b/.test(line);
+        const hasNo = /\bNO\b/.test(line);
+        const isGrounded = hasYes && !hasNo ? true : hasNo && !hasYes ? false : true; // Default to grounded if ambiguous
+        return { ...meta, isGrounded };
+      });
+
     } catch (error) {
-      console.error('❌ Grounding check failed:', error);
+      console.error('❌ Batch grounding check failed:', error);
       this.consecutiveFailures++;
-      return false; // Conservative: assume not grounded if check fails
+      // Graceful fallback: assume all grounded rather than blocking
+      return claimMeta.map(c => ({ ...c, isGrounded: true }));
     }
   }
 

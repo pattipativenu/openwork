@@ -5,13 +5,9 @@
  * This is a Cross-Encoder approach which is more accurate than Bi-Encoder (cosine similarity)
  * because it sees the query and document together in the attention mechanism.
  * 
- * Integrated with OpenTelemetry for full observability.
- * 
  * Model: Xenova/bge-reranker-base (public, no auth required)
  * Runtime: @xenova/transformers (ONNX Runtime)
  */
-
-import { withToolSpan } from '@/lib/otel';
 import type { PubMedArticle } from './pubmed';
 import type { CochraneReview } from './cochrane';
 import type { EuropePMCArticle } from './europepmc';
@@ -369,7 +365,7 @@ function getArticleText(article: { title: string; abstract?: string; abstractTex
 }
 
 /**
- * Core BGE reranking function with Phoenix tracing
+ * Core BGE reranking function
  */
 export async function rerankWithBGE<T extends { title: string; abstract?: string; abstractText?: string }>(
     query: string,
@@ -403,22 +399,10 @@ export async function rerankWithBGE<T extends { title: string; abstract?: string
     // EXECUTION CONFIRMATION: Entering main processing
     console.log(`[BGEReranker] ✅ EXECUTION CONFIRMED: Processing ${articles.length} articles with BGE Cross-Encoder`);
 
-    // Wrap with Tool Span for observability
-    return withToolSpan<BGERankedArticle<T>[]>(
-        'bge-reranker',
-        'rerank',
-        async (span) => {
-            const startTime = Date.now();
-            const articlesToRerank = articles.slice(0, topK);
+    const startTime = Date.now();
+    const articlesToRerank = articles.slice(0, topK);
 
-            // Set span attributes for dashboard
-            span.setAttribute('reranker.model', PRIMARY_MODEL);
-            span.setAttribute('reranker.input_count', articlesToRerank.length);
-            span.setAttribute('reranker.query', query.substring(0, 200));
-            span.setAttribute('reranker.max_length', maxLength);
-            span.setAttribute('reranker.min_score', minScore);
-
-            try {
+    try {
                 // EXECUTION CONFIRMATION: Model loading phase
                 console.log(`[BGEReranker] 🔄 PHASE 1: Loading BGE Cross-Encoder model...`);
                 const ranker = await getRerankerPipeline();
@@ -606,11 +590,6 @@ export async function rerankWithBGE<T extends { title: string; abstract?: string
 
                 const stats = getScoreStats(scores);
                 if (stats) {
-                    span.setAttribute('reranker.score_min', Math.round(stats.min * 1000) / 1000);
-                    span.setAttribute('reranker.score_median', Math.round(stats.median * 1000) / 1000);
-                    span.setAttribute('reranker.score_max', Math.round(stats.max * 1000) / 1000);
-                    span.setAttribute('reranker.score_separation', Math.round(stats.separation * 1000) / 1000);
-
                     console.log(
                         `[BGEReranker] 📊 PHASE 4: Score analysis - min=${stats.min.toFixed(6)}, median=${stats.median.toFixed(6)}, max=${stats.max.toFixed(6)}, separation=${stats.separation.toFixed(6)}`
                     );
@@ -628,7 +607,6 @@ export async function rerankWithBGE<T extends { title: string; abstract?: string
 
                     const blendedStats = getScoreStats(scores);
                     if (blendedStats) {
-                        span.setAttribute('reranker.score_separation_blended', Math.round(blendedStats.separation * 1000) / 1000);
                         console.log(
                             `[BGEReranker] ✅ PHASE 5 COMPLETE: Blended scores - min=${blendedStats.min.toFixed(6)}, median=${blendedStats.median.toFixed(6)}, max=${blendedStats.max.toFixed(6)}, separation=${blendedStats.separation.toFixed(6)}`
                         );
@@ -676,14 +654,6 @@ export async function rerankWithBGE<T extends { title: string; abstract?: string
                 const topScore = filteredArticles.length > 0 ? filteredArticles[0].score : 0;
                 const elapsedTime = Date.now() - startTime;
 
-                // Set result attributes on span
-                span.setAttribute('reranker.output_count', filteredArticles.length);
-                span.setAttribute('reranker.filtered_count', articlesToRerank.length - filteredArticles.length);
-                span.setAttribute('reranker.avg_score', Math.round(avgScore * 1000) / 1000);
-                span.setAttribute('reranker.top_score', Math.round(topScore * 1000) / 1000);
-                span.setAttribute('reranker.latency_ms', elapsedTime);
-                span.setAttribute('reranker.invalid_scores', invalidScores);
-
                 console.log(`[BGEReranker] ✅ PHASE 6 COMPLETE: Final results ready`);
                 console.log(
                     `[BGEReranker] 🎉 EXECUTION SUCCESSFUL: Reranked ${filteredArticles.length}/${articlesToRerank.length} articles in ${elapsedTime}ms ` +
@@ -699,37 +669,30 @@ export async function rerankWithBGE<T extends { title: string; abstract?: string
                 console.log(`[BGEReranker]    ✅ Performance: ${elapsedTime}ms total, ${(elapsedTime / pairs.length).toFixed(1)}ms per pair`);
 
                 return filteredArticles;
-            } catch (error) {
-                const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-                span.setAttribute('reranker.error', errorMessage);
-                console.error('[BGEReranker] ❌ EXECUTION FAILED: Reranking error, returning original order:', error);
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error('[BGEReranker] ❌ EXECUTION FAILED: Reranking error, returning original order:', error);
 
-                // EXECUTION CONFIRMATION: Failure with graceful degradation
-                console.log(`[BGEReranker] 🔄 FALLBACK ACTIVATED: Using lexical similarity for ordering`);
+        // EXECUTION CONFIRMATION: Failure with graceful degradation
+        console.log(`[BGEReranker] 🔄 FALLBACK ACTIVATED: Using lexical similarity for ordering`);
 
-                // Graceful degradation: fallback to lexical similarity for usable ordering
-                const lexicalScores = articles.map(article => computeLexicalScore(query, getArticleText(article, maxLength)));
-                const stats = getScoreStats(lexicalScores);
-                if (stats) {
-                    console.log(
-                        `[BGEReranker] 📊 FALLBACK SCORES: min=${stats.min.toFixed(6)}, median=${stats.median.toFixed(6)}, max=${stats.max.toFixed(6)}, separation=${stats.separation.toFixed(6)}`
-                    );
-                }
-
-                console.log(`[BGEReranker] ⚠️  EXECUTION COMPLETED WITH FALLBACK: Lexical similarity used instead of BGE`);
-
-                return articles.map((article, index) => ({
-                    article,
-                    score: lexicalScores[index] ?? 0,
-                    originalRank: index,
-                }));
-            }
-        },
-        {
-            'reranker.type': 'cross-encoder',
-            'reranker.provider': 'BAAI',
+        // Graceful degradation: fallback to lexical similarity for usable ordering
+        const lexicalScores = articles.map(article => computeLexicalScore(query, getArticleText(article, maxLength)));
+        const stats = getScoreStats(lexicalScores);
+        if (stats) {
+            console.log(
+                `[BGEReranker] 📊 FALLBACK SCORES: min=${stats.min.toFixed(6)}, median=${stats.median.toFixed(6)}, max=${stats.max.toFixed(6)}, separation=${stats.separation.toFixed(6)}`
+            );
         }
-    );
+
+        console.log(`[BGEReranker] ⚠️  EXECUTION COMPLETED WITH FALLBACK: Lexical similarity used instead of BGE`);
+
+        return articles.map((article, index) => ({
+            article,
+            score: lexicalScores[index] ?? 0,
+            originalRank: index,
+        }));
+    }
 }
 
 /**

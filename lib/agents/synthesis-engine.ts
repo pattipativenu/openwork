@@ -4,37 +4,30 @@
  * Uses Gemini 3.0 Pro for complex queries, Flash for simple ones
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { RankedEvidence, EvidenceGapAnalysis, SynthesisResult, TraceContext, AgentResult } from './types';
-import { logAgent } from '../observability/arize-client';
+import { withToolSpan, SpanStatusCode, captureTokenUsage } from '../otel';
+import { callGeminiWithRetry } from '../utils/gemini-rate-limiter';
+
+// Import ThinkingLevel enum
+import { ThinkingLevel } from '@google/genai';
+import { getStudyModePrompt } from '../prompts/study-mode-prompt';
 
 export class SynthesisEngine {
-  private genAI: GoogleGenerativeAI;
-  private flashModel: any;
-  private proModel: any;
-  private fallbackFlashModel: any;
-  private fallbackProModel: any;
+  private genAI: GoogleGenAI;
+  private flashModelName: string;
+  private proModelName: string;
+  private fallbackFlashModelName: string;
+  private fallbackProModelName: string;
+  private systemPrompt: string;
 
   constructor(apiKey: string) {
-    this.genAI = new GoogleGenerativeAI(apiKey);
-    this.flashModel = this.genAI.getGenerativeModel({ 
-      model: process.env.GEMINI_FLASH_MODEL || 'gemini-3-flash-preview',
-      systemInstruction: this.getSystemPrompt()
-    });
-    this.proModel = this.genAI.getGenerativeModel({ 
-      model: process.env.GEMINI_PRO_MODEL || 'gemini-3-pro-preview',
-      systemInstruction: this.getSystemPrompt()
-    });
-    
-    // Fallback models
-    this.fallbackFlashModel = this.genAI.getGenerativeModel({
-      model: 'gemini-3-flash-preview',
-      systemInstruction: this.getSystemPrompt()
-    });
-    this.fallbackProModel = this.genAI.getGenerativeModel({
-      model: 'gemini-3-flash-preview',
-      systemInstruction: this.getSystemPrompt()
-    });
+    this.genAI = new GoogleGenAI({ apiKey });
+    this.flashModelName = process.env.AGENT_6_MODEL || 'gemini-3-flash-preview';
+    this.proModelName = 'gemini-3-flash-preview'; // Defaulting to Flash for speed, can override via env if Pro needed
+    this.fallbackFlashModelName = 'gemini-3-flash-preview';
+    this.fallbackProModelName = 'gemini-3-flash-preview';
+    this.systemPrompt = this.getSystemPrompt();
   }
 
   private getSystemPrompt(): string {
@@ -46,9 +39,15 @@ export class SynthesisEngine {
 
 <core_mission>
   <primary_goal>Create accurate, well-cited medical syntheses that present evidence without making clinical recommendations</primary_goal>
+  <critical_citation_requirement>
+    <requirement>EVERY citation MUST use format [[N]](ACTUAL_URL) where ACTUAL_URL is the real https:// URL from the evidence context</requirement>
+    <requirement>FORBIDDEN: Using [[N]](#) or [[N]](#) will completely break the citation system</requirement>
+    <requirement>Each evidence item has "URL: [actual-url]" - you MUST copy this exact URL into your citations</requirement>
+    <requirement>Example: If evidence [1] has "URL: https://pubmed.ncbi.nlm.nih.gov/12345678/", you MUST write [[1]](https://pubmed.ncbi.nlm.nih.gov/12345678/)</requirement>
+  </critical_citation_requirement>
   <success_criteria>
-    <criterion>Every factual claim must have inline citation [N] linking to specific evidence source</criterion>
-    <criterion>Synthesis must be comprehensive yet concise (≤500 words)</criterion>
+    <criterion>Every factual claim must have inline citation [[N]](URL) with REAL clickable URL</criterion>
+    <criterion>Synthesis length should adapt to query complexity: simple queries ≤300 words, standard queries ~400-500 words, complex/multi-faceted queries up to 700 words. Prioritize completeness and citation density over strict brevity.</criterion>
     <criterion>Must acknowledge evidence limitations and contradictions explicitly</criterion>
     <criterion>Must maintain strict evidence-only presentation without clinical advice</criterion>
     <criterion>Must structure information hierarchically by evidence strength</criterion>
@@ -121,21 +120,29 @@ export class SynthesisEngine {
 
 <inline_citation_requirements>
   <critical_rules>
-    <rule>Use EXACT format: [[N]](URL) for inline citations</rule>
+    <rule>Use EXACT format: [[N]](URL) for inline citations where N is the evidence number and URL is the EXACT URL from the evidence context</rule>
     <rule>Citations must be placed immediately after the claim they support</rule>
     <rule>Multiple sources for same claim: [[1]](url1)[[3]](url3)[[5]](url5) format</rule>
     <rule>Contradictory evidence: "While [[1]](url1) found X, [[2]](url2) reported Y" format</rule>
     <rule>No claim may be made without corresponding evidence source</rule>
     <rule>Every major clinical statement needs a citation</rule>
-    <rule>CRITICAL: Use the exact URL provided in the evidence context for each source</rule>
-    <rule>The evidence context includes "URL: [url]" for each source - use these URLs in your inline citations</rule>
+    <rule>CRITICAL: Each evidence item in the context has a line "URL: [actual-url]" - you MUST copy this EXACT URL into your citation</rule>
+    <rule>For PubMed sources, the URL will be like "https://pubmed.ncbi.nlm.nih.gov/12345678/" or "https://pmc.ncbi.nlm.nih.gov/articles/PMC1234567/"</rule>
+    <rule>For DailyMed sources, the URL will be like "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=..."</rule>
+    <rule>ABSOLUTELY FORBIDDEN: NEVER EVER use "#" or "(#)" as a URL - this will break the citation system completely</rule>
+    <rule>MANDATORY: Every [[N]](URL) citation MUST have a real, complete, clickable URL starting with https://</rule>
+    <rule>CITATION DENSITY: You MUST aim for at least 1 citation per sentence. Never allow a sentence with a clinical claim to go uncited.</rule>
+    <rule>If you cannot find a URL in the evidence context, use the PMID to construct: https://pubmed.ncbi.nlm.nih.gov/[PMID]/</rule>
+    <rule>VALIDATION: Before outputting, verify every citation has format [[N]](https://...) with a real URL, not [[N]](#)</rule>
   </critical_rules>
   
   <citation_patterns>
-    <pattern type="single_source">Metformin reduces HbA1c by 1-2%[[1]](url).</pattern>
-    <pattern type="multiple_sources">Multiple studies confirm cardiovascular benefits[[2]](url2)[[4]](url4)[[7]](url7).</pattern>
-    <pattern type="contradictory">While [[1]](url1) showed no difference, [[3]](url3) demonstrated significant improvement.</pattern>
-    <pattern type="qualified">Limited evidence suggests potential benefit[[5]](url5), though larger studies are needed.</pattern>
+    <description>CRITICAL: Every citation MUST use the EXACT URL from the evidence context. Look for "URL: [actual-url]" line in each evidence item.</description>
+    <pattern type="single_source">Metformin reduces HbA1c by 1-2%[[1]](https://pubmed.ncbi.nlm.nih.gov/12345678/).</pattern>
+    <pattern type="multiple_sources">Multiple studies confirm cardiovascular benefits[[2]](https://pubmed.ncbi.nlm.nih.gov/23456789/)[[4]](https://pmc.ncbi.nlm.nih.gov/articles/PMC1234567/)[[7]](https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=abc123).</pattern>
+    <pattern type="contradictory">While [[1]](https://pubmed.ncbi.nlm.nih.gov/12345678/) showed no difference, [[3]](https://pubmed.ncbi.nlm.nih.gov/34567890/) demonstrated significant improvement.</pattern>
+    <pattern type="qualified">Limited evidence suggests potential benefit[[5]](https://pubmed.ncbi.nlm.nih.gov/45678901/), though larger studies are needed.</pattern>
+    <wrong_pattern type="FORBIDDEN">DO NOT USE: [[1]](#) or [[1]](#) - These are INVALID and will break citations</wrong_pattern>
   </citation_patterns>
   
   <citation_density>
@@ -146,94 +153,33 @@ export class SynthesisEngine {
   </citation_density>
 </inline_citation_requirements>
 
-<reference_section_format>
-  <description>MANDATORY: End response with properly formatted References section</description>
-  <exact_structure>
-## References
-
-1. [Full Article Title Here](URL)
-   Authors: Name1, Name2, Name3, et al.
-   Journal: Journal Name. Year.
-   PMID: xxxxx | PMCID: PMCxxxxx | DOI: xxxxx
-   [Source Badge] - [Quality Badge]
-
-2. [Full Article Title Here](URL)
-   Authors: Name1, Name2, Name3, et al.
-   Journal: Journal Name. Year.
-   PMID: xxxxx | PMCID: PMCxxxxx | DOI: xxxxx
-   [Source Badge] - [Quality Badge]
-  </exact_structure>
-  
-  <critical_title_rules>
-    <rule>ALWAYS use the ACTUAL ARTICLE TITLE from the evidence</rule>
-    <rule>NEVER use generic titles like "National Institutes of Health" or "PubMed Central"</rule>
-    <rule>EXTRACT the real article title from the evidence text</rule>
-    <rule>For PMC articles: Look for the article title in the evidence, NOT the source name</rule>
-  </critical_title_rules>
-  
-  <url_construction_rules>
-    <priority_order>
-      <priority level="1">PMC ID (if available) - https://pmc.ncbi.nlm.nih.gov/articles/PMC[PMCID] - FULL TEXT</priority>
-      <priority level="2">PubMed PMID link - https://pubmed.ncbi.nlm.nih.gov/[PMID] - ABSTRACT</priority>
-      <priority level="3">Europe PMC (if open access) - https://europepmc.org/article/MED/[PMID]</priority>
-      <priority level="4">Official guideline URLs (government/professional societies only)</priority>
-    </priority_order>
-    
-    <forbidden_urls>
-      <forbidden>NEVER use www.nejm.org URLs</forbidden>
-      <forbidden>NEVER use www.thelancet.com URLs</forbidden>
-      <forbidden>NEVER use jamanetwork.com URLs</forbidden>
-      <forbidden>NEVER use any paywalled journal URLs</forbidden>
-      <forbidden>NEVER use DOI links that resolve to paywalled content</forbidden>
-      <forbidden>NEVER use google.com/search URLs</forbidden>
-    </forbidden_urls>
-  </url_construction_rules>
-  
-  <badge_system>
-    <source_badges>
-      <badge>Practice Guideline</badge>
-      <badge>Systematic Review</badge>
-      <badge>Cochrane</badge>
-      <badge>Meta-Analysis</badge>
-      <badge>Pivotal RCT</badge>
-      <badge>Cohort Study</badge>
-      <badge>Drug Label</badge>
-    </source_badges>
-    
-    <quality_badges>
-      <badge>High-Impact</badge>
-      <badge>Leading Journal</badge>
-      <badge>Recent (≤3y)</badge>
-      <badge>Highly Cited</badge>
-    </quality_badges>
-  </badge_system>
-</reference_section_format>
 
 <mandatory_followup_questions>
   <description>CRITICAL: Every response MUST end with exactly 3 follow-up questions</description>
   <exact_format>
 ## Follow-Up Questions
 
-1. [Question deepening clinical understanding related to original query]?
-2. [Question exploring alternative scenarios or complications related to original query]?
-3. [Question about practical application, monitoring, or edge cases related to original query]?
+1. [Detailed question deepening clinical understanding — 1-2 full sentences with clinical context for why this matters]?
+2. [Detailed question exploring alternative scenarios or complications — 1-2 full sentences referencing specific drugs, conditions, or populations]?
+3. [Detailed question about practical application, monitoring, or edge cases — 1-2 full sentences connecting to the evidence gaps or limitations discussed]?
   </exact_format>
   
   <question_requirements>
     <requirement>MUST use the heading "## Follow-Up Questions" (with ## markdown)</requirement>
     <requirement>MUST be numbered 1., 2., 3.</requirement>
     <requirement>MUST end with question mark</requirement>
-    <requirement>Questions MUST be directly related to the original user query</requirement>
-    <requirement>Questions should deepen understanding and explore clinical nuances</requirement>
-    <requirement>Avoid generic questions - make them specific to the medical topic discussed</requirement>
+    <requirement>Questions MUST be directly related to the original user query topic</requirement>
+    <requirement>Each question MUST be detailed and descriptive (1-2 full sentences), providing specific clinical context for why the question matters to the user's original query</requirement>
+    <requirement>Include specific drug names, study acronyms, guideline names, or population details when relevant — never write vague or generic questions</requirement>
+    <requirement>Questions should naturally flow from the evidence discussed and help the user explore deeper layers of the same topic</requirement>
   </question_requirements>
   
   <examples>
     <original_query>Type 2 diabetes first-line treatment</original_query>
     <good_followups>
-      <question>What are the specific contraindications for metformin in patients with varying degrees of renal impairment?</question>
-      <question>How should metformin therapy be modified in elderly patients with multiple comorbidities?</question>
-      <question>What are the evidence-based criteria for adding a second antidiabetic agent to metformin monotherapy?</question>
+      <question>What are the specific contraindications for metformin in patients with varying degrees of renal impairment, and how do KDIGO guidelines inform dose adjustments at different eGFR thresholds (e.g., 30-45 vs 15-30 mL/min)?</question>
+      <question>How should metformin therapy be initiated and titrated in elderly patients (≥65 years) with multiple comorbidities such as heart failure and chronic liver disease, given the limited trial representation of this population in landmark studies like UKPDS?</question>
+      <question>What are the evidence-based criteria for adding a second antidiabetic agent (e.g., SGLT2 inhibitor or GLP-1 receptor agonist) to metformin monotherapy, and how do cardiovascular outcome trials like EMPA-REG and LEADER influence this decision?</question>
     </good_followups>
     <bad_followups>
       <question>What other diseases can be treated?</question>
@@ -316,7 +262,7 @@ Strong evidence from Indian and international guidelines supports metformin as f
 2. [ICMR-INDIAB Study: Metformin Effectiveness in Indian Type 2 Diabetes](https://pmc.ncbi.nlm.nih.gov/articles/PMC12345)
    Authors: Pradeepa R, Anjana RM, Mohan V, et al.
    Journal: Diabetes Care. 2023.
-   PMID: 12345678 | DOI: 10.2337/dc23-S001
+   PMID: 12345678 | PMCID: PMC12345 | DOI: 10.2337/dc23-S001
    Cohort Study - High-Impact - Recent (≤3y)
 
 [Continue with references 3-10...]
@@ -333,25 +279,34 @@ Strong evidence from Indian and international guidelines supports metformin as f
 <critical_requirements>
   <requirement>NEVER generate any content without corresponding citations in [[N]](URL) format</requirement>
   <requirement>NEVER make treatment recommendations or clinical advice</requirement>
-  <requirement>NEVER exceed 500 words total length</requirement>
+  <requirement>Adapt word count to query complexity: simple ≤300, standard ~400-500, complex up to 700 words</requirement>
   <requirement>ALWAYS follow the exact 4-section structure</requirement>
-  <requirement>ALWAYS include properly formatted References section</requirement>
-  <requirement>ALWAYS end with exactly 3 follow-up questions related to original query</requirement>
+  <requirement>ALWAYS include properly formatted References section with: [Title](URL), Authors, Journal, Year, PMID, PMCID, DOI, and quality badges</requirement>
+  <requirement>ALWAYS end with exactly 3 DETAILED follow-up questions (1-2 sentences each) directly related to original query topic</requirement>
   <requirement>ALWAYS acknowledge contradictory evidence when present</requirement>
   <requirement>ALWAYS use actual article titles, never generic source names</requirement>
 </critical_requirements>
 
 <quality_assurance>
   <pre_output_checklist>
-    <check>Every factual claim has inline citation [N]</check>
+    <check>Every factual claim has inline citation [[N]](URL) with REAL URL</check>
+    <check>CRITICAL: Verify NO citations use (#) or empty URLs - ALL must be https:// URLs</check>
     <check>No treatment recommendations or medical advice present</check>
-    <check>Word count ≤500 words</check>
+    <check>Word count is appropriate for query complexity (300-700 range)</check>
     <check>Contradictory evidence acknowledged if present</check>
     <check>Evidence limitations explicitly stated</check>
     <check>All citations correspond to provided evidence sources</check>
     <check>Medical terminology is accurate and current</check>
     <check>Structure follows direct answer → evidence → limitations format</check>
   </pre_output_checklist>
+
+  <citation_validation>
+    <step>Before outputting response, scan for any [[N]](#) patterns</step>
+    <step>If found, replace (#) with the actual URL from the evidence context</step>
+    <step>Look for "URL: [actual-url]" line in the evidence item [N]</step>
+    <step>Copy that exact URL into the citation</step>
+    <step>Final check: Every [[N]](URL) must have https:// in the URL part</step>
+  </citation_validation>
 </quality_assurance>`;
   }
 
@@ -360,18 +315,45 @@ Strong evidence from Indian and international guidelines supports metformin as f
     evidencePack: RankedEvidence[],
     gapAnalysis: EvidenceGapAnalysis,
     complexityScore: number,
-    traceContext: TraceContext
+    traceContext: TraceContext,
+    isStudyMode: boolean = false
   ): Promise<AgentResult<SynthesisResult>> {
-    const startTime = Date.now();
+    return await withToolSpan('synthesis_engine', 'execute', async (span) => {
+      const startTime = Date.now();
 
-    try {
+      // Set input attributes
+      span.setAttribute('agent.input', JSON.stringify({ query, num_sources: evidencePack.length, complexity_score: complexityScore }));
+      span.setAttribute('agent.name', 'synthesis_engine');
+
+      try {
+        // When no evidence is available, return a clear message instead of calling the API
+        if (!evidencePack || evidencePack.length === 0) {
+          const latency = Date.now() - startTime;
+          const fallbackResult: AgentResult<SynthesisResult> = {
+            success: true,
+            data: {
+              synthesis: `**Quick Answer**\nWe did not find enough peer-reviewed evidence in our sources to synthesize an answer for this query. Try rephrasing (e.g., broader terms or one condition at a time) or ask a follow-up focused on a specific drug or outcome.\n\n**Evidence limitations**\nNo PubMed or guideline results were available for the current search. This tool is for research support only and does not replace clinical judgment.`,
+              citations: [],
+              model_used: 'none',
+              evidence_pack: [],
+              tokens: { input: 0, output: 0, total: 0 },
+              cost: 0
+            },
+            latency_ms: latency
+          };
+          return fallbackResult;
+        }
+
       // Choose model based on complexity
       const useProModel = complexityScore > 0.5 || gapAnalysis.contradictions_detected;
-      let model = useProModel ? this.proModel : this.flashModel;
-      let fallbackModel = useProModel ? this.fallbackProModel : this.fallbackFlashModel;
-      let modelName = useProModel ? 'gemini-3-pro-preview' : 'gemini-3-flash-preview';
+        let currentModelName = useProModel ? this.proModelName : this.flashModelName;
+        let fallbackModelNameToUse = useProModel ? this.fallbackProModelName : this.fallbackFlashModelName;
+        let modelName = currentModelName;
 
-      console.log(`🤖 Using ${modelName} for synthesis (complexity: ${complexityScore.toFixed(2)})`);
+        // Determine thinking level based on complexity and contradictions
+        const thinkingLevel = (complexityScore > 0.5 || gapAnalysis.contradictions_detected) ? ThinkingLevel.LOW : ThinkingLevel.LOW;
+
+        console.log(`🤖 Using ${modelName} for synthesis (complexity: ${complexityScore.toFixed(2)}, thinking: ${thinkingLevel})`);
 
       // Build evidence context
       const evidenceContext = this.formatEvidenceForSynthesis(evidencePack);
@@ -386,52 +368,136 @@ Gap Analysis Summary:
 - Contradictions: ${gapAnalysis.contradictions_detected ? 'Yes' : 'No'}
 - Missing: ${gapAnalysis.missing_elements.slice(0, 3).join(', ') || 'None'}
 
-Generate synthesis (<500 words):`;
+Generate synthesis (adapt length to query complexity: simple ≤300w, standard ~400-500w, complex up to 700w):`;
 
       let response;
-      
+
       try {
-        // Try Gemini 3.0 first
-        response = await model.generateContent(prompt, {
-          generationConfig: {
-            temperature: 0.2,
-            maxOutputTokens: 1000
-          }
-        });
+        // CRITICAL FIX: Use rate limiter with multi-key support and longer timeout for synthesis (60s)
+        // Synthesis can take longer due to complex reasoning and large context
+        response = await callGeminiWithRetry(
+          async (apiKey: string) => {
+            const genAI = new GoogleGenAI({ apiKey });
+            const activeSystemPrompt = isStudyMode ? getStudyModePrompt() : this.systemPrompt;
+
+            return await genAI.models.generateContent({
+              model: currentModelName,
+              contents: prompt,
+              config: {
+                systemInstruction: activeSystemPrompt,
+                temperature: 0.2,
+                maxOutputTokens: 4000,
+                thinkingConfig: {
+                  thinkingLevel: thinkingLevel // Dynamic: high for complex/contradictions, medium for simple
+                }
+              }
+            });
+          },
+          3, // maxRetries
+          1000, // retryDelay
+          60000 // timeoutMs: 60 seconds for synthesis (was 30s default)
+        );
       } catch (primaryError) {
-        // If Gemini 3.0 is overloaded, fallback to 2.5
-        if (primaryError instanceof Error && primaryError.message.includes('overloaded')) {
-          console.log(`⚠️ ${modelName} overloaded, falling back to Gemini 3.0 Flash...`);
-          modelName = 'gemini-3-flash-preview';
-          response = await fallbackModel.generateContent(prompt, {
-            generationConfig: {
-              temperature: 0.2,
-              maxOutputTokens: 1000
-            }
-          });
+        // If still overloaded after retries, try fallback model with rate limiter
+        if (primaryError instanceof Error && (primaryError.message.includes('overloaded') || primaryError.message.includes('Max retries'))) {
+          console.log(`⚠️ ${modelName} overloaded after retries, trying ${fallbackModelNameToUse} with rate limiter...`);
+          modelName = fallbackModelNameToUse;
+          response = await callGeminiWithRetry(
+            async (apiKey: string) => {
+              const genAI = new GoogleGenAI({ apiKey });
+              const activeSystemPrompt = isStudyMode ? getStudyModePrompt() : this.systemPrompt;
+
+              return await genAI.models.generateContent({
+                model: fallbackModelNameToUse,
+                contents: prompt,
+                config: {
+                  systemInstruction: activeSystemPrompt,
+                  temperature: 0.2,
+                  maxOutputTokens: 4000,
+                  thinkingConfig: {
+                    thinkingLevel: thinkingLevel // Use same thinking level for fallback
+                  }
+                }
+              });
+            },
+            3, // maxRetries
+            1000, // retryDelay
+            60000 // timeoutMs: 60 seconds for synthesis fallback
+          );
+
+          if (response.usageMetadata) {
+            console.log(`Fallback usage: ${JSON.stringify(response.usageMetadata)}`);
+          }
         } else {
           throw primaryError;
         }
       }
 
-      const synthesisText = response.response.text();
+        const synthesisText = response.text || '';
+
+        // CRITICAL FIX: Post-process to catch any (#) patterns and replace with proper URLs
+        let fixedSynthesisText = synthesisText;
+        const hashCitationPattern = /\[\[(\d+)\]\]\(#\)/g;
+        const matches = [...synthesisText.matchAll(hashCitationPattern)];
+
+        if (matches.length > 0) {
+          console.warn(`⚠️ Found ${matches.length} citations with (#) - fixing with actual URLs...`);
+
+          matches.forEach(match => {
+            const citationNum = parseInt(match[1]);
+            const evidence = evidencePack.find(e => e.rank === citationNum);
+
+            if (evidence) {
+              // Build proper URL
+              let properUrl = '';
+              switch (evidence.source) {
+                case 'pubmed':
+                  properUrl = evidence.metadata.pmcid ?
+                    `https://pmc.ncbi.nlm.nih.gov/articles/${evidence.metadata.pmcid}/` :
+                    `https://pubmed.ncbi.nlm.nih.gov/${evidence.id}/`;
+                  break;
+                case 'indian_guideline':
+                  properUrl = evidence.metadata.url || '';
+                  break;
+                case 'dailymed':
+                  properUrl = `https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=${evidence.id}`;
+                  break;
+                case 'tavily_web':
+                  properUrl = evidence.metadata.url || '';
+                  break;
+                default:
+                  properUrl = evidence.metadata.url || '';
+                  break;
+              }
+
+              if (properUrl) {
+                fixedSynthesisText = fixedSynthesisText.replace(
+                  `[[${citationNum}]](#)`,
+                  `[[${citationNum}]](${properUrl})`
+                );
+                console.log(`✅ Fixed citation [${citationNum}]: ${properUrl}`);
+              }
+            }
+          });
+        }
+
       const latency = Date.now() - startTime;
 
-      // Extract citations
-      const citations = this.extractCitations(synthesisText, evidencePack);
+        // Extract citations (use fixed text)
+        const citations = this.extractCitations(fixedSynthesisText, evidencePack);
 
       // Track tokens for cost
       const tokens = {
-        input: response.response.usageMetadata?.promptTokenCount || 3000,
-        output: response.response.usageMetadata?.candidatesTokenCount || 800,
-        total: response.response.usageMetadata?.totalTokenCount || 3800
+        input: response.usageMetadata?.promptTokenCount || 3000,
+        output: response.usageMetadata?.candidatesTokenCount || 800,
+        total: response.usageMetadata?.totalTokenCount || 3800
       };
 
       // Calculate cost
       const cost = this.calculateCost(modelName, tokens);
 
       const synthesisResult: SynthesisResult = {
-        synthesis: synthesisText,
+        synthesis: fixedSynthesisText, // Use fixed text with proper URLs
         citations,
         evidence_pack: evidencePack,
         tokens,
@@ -439,55 +505,51 @@ Generate synthesis (<500 words):`;
         model_used: modelName
       };
 
-      const result: AgentResult<SynthesisResult> = {
-        success: true,
-        data: synthesisResult,
-        latency_ms: latency,
-        tokens,
-        cost_usd: cost
-      };
-
-      // Log to Arize
-      await logAgent(
-        'synthesis_engine',
-        traceContext,
-        { query, num_sources: evidencePack.length, model_used: modelName },
-        { 
-          synthesis_length: synthesisText.length, 
-          num_citations: citations.length,
+        const result: AgentResult<SynthesisResult> = {
+          success: true,
+          data: synthesisResult,
+          latency_ms: latency,
+          tokens,
           cost_usd: cost
-        },
-        result,
-        modelName
-      );
+        };
 
-      console.log(`✅ Synthesis complete: ${synthesisText.length} chars, ${citations.length} citations`);
-      console.log(`💰 Cost: $${cost.toFixed(4)} (${modelName})`);
+        // Set span attributes
+        span.setAttribute('agent.output', JSON.stringify({
+          synthesis_length: fixedSynthesisText.length,
+          num_citations: citations.length
+        }));
+        span.setAttribute('agent.latency_ms', latency);
+        span.setAttribute('agent.cost_usd', cost);
+        span.setAttribute('agent.model_name', modelName);
+        span.setAttribute('agent.success', true);
+        captureTokenUsage(span, tokens, modelName);
 
-      return result;
+        console.log(`✅ Synthesis complete: ${fixedSynthesisText.length} chars, ${citations.length} citations`);
+        console.log(`💰 Cost: $${cost.toFixed(4)} (${modelName})`);
 
-    } catch (error) {
-      console.error('❌ Synthesis failed:', error);
-      
-      const latency = Date.now() - startTime;
-      const result: AgentResult<SynthesisResult> = {
-        success: false,
-        data: {} as SynthesisResult,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        latency_ms: latency
-      };
+        return result;
 
-      await logAgent(
-        'synthesis_engine',
-        traceContext,
-        { query, num_sources: evidencePack.length },
-        { error: result.error },
-        result,
-        'synthesis_failed'
-      );
+      } catch (error) {
+        console.error('❌ Synthesis failed:', error);
 
-      return result;
-    }
+        const latency = Date.now() - startTime;
+        const result: AgentResult<SynthesisResult> = {
+          success: false,
+          data: {} as SynthesisResult,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          latency_ms: latency
+        };
+
+        // Set error attributes
+        span.setAttribute('agent.success', false);
+        span.setAttribute('agent.error', result.error || 'Unknown error');
+        span.setAttribute('agent.latency_ms', latency);
+        span.recordException(error as Error);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: result.error || 'Unknown error' });
+
+        return result;
+      }
+    });
   }
 
   private formatEvidenceForSynthesis(evidencePack: RankedEvidence[]): string {
@@ -570,6 +632,7 @@ ${item.chunk_info?.section ? `Section: ${item.chunk_info.section}` : ''}
     // Find all [[N]](URL) and [[N]] patterns
     const citationPatterns = [
       /\[\[(\d+)\]\]\([^)]+\)/g,  // [[N]](URL) format
+      /\[\[(\d+)\]\(([^)]+)\)\]/g, // [[N](URL)] format (fallback for malformed)
       /\[\[(\d+)\]\]/g            // [[N]] format (fallback)
     ];
     
@@ -712,22 +775,22 @@ ${item.chunk_info?.section ? `Section: ${item.chunk_info.section}` : ''}
   }
 
   private calculateCost(modelName: string, tokens: { input: number; output: number }): number {
-    const pricing = {
+    const pricing: Record<string, { input: number; output: number }> = {
       'gemini-3-flash-preview': {
-        input: 0.075 / 1_000_000,
-        output: 0.30 / 1_000_000
+        input: 0.10 / 1_000_000,
+        output: 0.40 / 1_000_000
       },
       'gemini-3-pro-preview': {
         input: 1.25 / 1_000_000,
         output: 5.00 / 1_000_000
       },
-      'gemini-3-flash-preview': {
-        input: 0.075 / 1_000_000,
-        output: 0.30 / 1_000_000
+      'gemini-2.0-flash-001': {
+        input: 0.10 / 1_000_000,
+        output: 0.40 / 1_000_000
       }
     };
 
-    const rate = pricing[modelName as keyof typeof pricing] || pricing['gemini-3-flash-preview'];
+    const rate = pricing[modelName] || pricing['gemini-2.0-flash-001'] || { input: 0, output: 0 };
     
     return tokens.input * rate.input + tokens.output * rate.output;
   }

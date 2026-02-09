@@ -6,11 +6,7 @@
  * 1. DOI → Unpaywall API (finds open-access full-text)
  * 2. PMC ID → NCBI E-Utilities (fetches full-text from PubMed Central)
  * 3. Fallback → Use existing abstract from PubMed
- * 
- * Integrated with OpenTelemetry for observability.
  */
-
-import { withToolSpan } from '@/lib/otel';
 
 const NCBI_API_KEY = process.env.NCBI_API_KEY || '';
 const UNPAYWALL_EMAIL = 'openwork-ai@example.com'; // Required by Unpaywall API
@@ -269,58 +265,43 @@ export async function fetchFullText(
     title: string,
     existingAbstract: string | null | undefined
 ): Promise<FullTextResult> {
-    return withToolSpan<FullTextResult>(
-        'fulltext-fetcher',
-        'fetch',
-        async (span) => {
-            span.setAttribute('input.pmid', pmid);
-            span.setAttribute('input.doi', doi || 'none');
-            span.setAttribute('input.pmcid', pmcid || 'none');
+    let fullText: string | null = null;
+    let source: FullTextResult['source'] = 'none';
 
-            let fullText: string | null = null;
-            let source: FullTextResult['source'] = 'none';
+    // Strategy 1: Try DOI via Unpaywall
+    // DISABLED: Currently returns null and adds latency
+    /*
+    if (doi) {
+        fullText = await fetchViaUnpaywall(doi);
+        if (fullText) source = 'doi';
+    }
+    */
 
-            // Strategy 1: Try DOI via Unpaywall
-            // DISABLED: Currently returns null and adds latency
-            /*
-            if (doi) {
-                fullText = await fetchViaUnpaywall(doi);
-                if (fullText) source = 'doi';
-            }
-            */
+    // Strategy 2: Try PMC
+    if (!fullText) {
+        fullText = await fetchViaPMC(pmcid || null, pmid);
+        if (fullText) source = 'pmc';
+    }
 
-            // Strategy 2: Try PMC
-            if (!fullText) {
-                fullText = await fetchViaPMC(pmcid || null, pmid);
-                if (fullText) source = 'pmc';
-            }
+    // Strategy 3: Fall back to abstract
+    if (!fullText && existingAbstract) {
+        fullText = existingAbstract;
+        source = 'abstract';
+    }
 
-            // Strategy 3: Fall back to abstract
-            if (!fullText && existingAbstract) {
-                fullText = existingAbstract;
-                source = 'abstract';
-            }
+    const sections = fullText ? parseIntoSections(fullText, title) : [];
+    const wordCount = fullText ? fullText.split(/\s+/).length : 0;
 
-            const sections = fullText ? parseIntoSections(fullText, title) : [];
-            const wordCount = fullText ? fullText.split(/\s+/).length : 0;
+    console.log(`[FullTextFetcher] PMID ${pmid}: ${source} (${wordCount} words, ${sections.length} sections)`);
 
-            span.setAttribute('output.source', source);
-            span.setAttribute('output.word_count', wordCount);
-            span.setAttribute('output.section_count', sections.length);
-
-            console.log(`[FullTextFetcher] PMID ${pmid}: ${source} (${wordCount} words, ${sections.length} sections)`);
-
-            return {
-                pmid,
-                title,
-                fullText,
-                sections,
-                source,
-                wordCount
-            };
-        },
-        { 'fetcher.type': 'cascading' }
-    );
+    return {
+        pmid,
+        title,
+        fullText,
+        sections,
+        source,
+        wordCount
+    };
 }
 
 /**

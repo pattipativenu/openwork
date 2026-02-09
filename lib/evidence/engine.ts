@@ -7,16 +7,7 @@
  */
 
 // Initialize evidence system and validate configuration
-// Initialize evidence system and validate configuration
 import './init';
-
-// Observability Imports (No-op)
-import {
-  withRetrieverSpan,
-  withRerankerSpan,
-  withToolSpan,
-  RetrievedDocument
-} from '../otel';
 
 // RAG SYSTEM IMPORTS
 import { rankRAGEvidence, type RAGRankingConfig } from './rag-evidence-ranker';

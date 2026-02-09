@@ -93,7 +93,7 @@ export async function comprehensiveDailyMedSearch(query: string): Promise<{ drug
     // Search for each detected drug
     for (const drugName of drugNames.slice(0, 3)) { // Limit to 3 drugs to avoid rate limits
       try {
-        const drugInfo = await searchDailyMedByName(drugName, 2);
+        const drugInfo = await searchDailyMedByName(drugName, 3); // Get 3 results to find best quality
 
         // CRITICAL ENHANCEMENT: Filter for recent labeling updates (2023+)
         const currentYear = new Date().getFullYear();
@@ -107,9 +107,20 @@ export async function comprehensiveDailyMedSearch(query: string): Promise<{ drug
 
         // Convert to expected format
         const convertedDrugs = finalDrugInfo.map(convertToDailyMedDrug);
-        allDrugs.push(...convertedDrugs);
 
-        console.log(`📋 Found ${convertedDrugs.length} recent drug labels for ${drugName}`);
+        // CRITICAL FIX: Sort by number of filled sections (content quality)
+        // This ensures manufacturer labels with full content rank above repackager labels
+        convertedDrugs.sort((a, b) => {
+          const sectionsA = countFilledSections(a);
+          const sectionsB = countFilledSections(b);
+          return sectionsB - sectionsA; // Descending order (most sections first)
+        });
+
+        // Only keep the best quality label per drug
+        if (convertedDrugs.length > 0) {
+          allDrugs.push(convertedDrugs[0]);
+          console.log(`📋 Selected best label for ${drugName}: ${countFilledSections(convertedDrugs[0])} sections`);
+        }
 
       } catch (error: any) {
         console.warn(`⚠️ DailyMed search failed for "${drugName}":`, error.message);
@@ -124,6 +135,21 @@ export async function comprehensiveDailyMedSearch(query: string): Promise<{ drug
     console.error('❌ DailyMed comprehensive search error:', error.message);
     return { drugs: [] };
   }
+}
+
+/**
+ * Count number of filled sections in a drug result
+ */
+function countFilledSections(drug: DailyMedDrug): number {
+  let count = 0;
+  if (drug.indications && drug.indications.length > 50) count++;
+  if (drug.dosage && drug.dosage.length > 50) count++;
+  if (drug.warnings && drug.warnings.length > 50) count++;
+  if (drug.adverseReactions && drug.adverseReactions.length > 50) count++;
+  if (drug.drugInteractions && drug.drugInteractions.length > 50) count++;
+  if (drug.contraindications && drug.contraindications.length > 50) count++;
+  if (drug.clinicalPharmacology && drug.clinicalPharmacology.length > 50) count++;
+  return count;
 }
 
 /**
@@ -448,60 +474,90 @@ export async function searchDailyMedByRxCUI(rxcui: string, limit: number = 10): 
 }
 
 /**
- * Get detailed SPL information by SET ID
+ * LOINC codes for FDA drug label sections
+ */
+const LOINC_SECTION_CODES: Record<string, string> = {
+  '34067-9': 'indications',           // Indications and Usage
+  '34068-7': 'dosage',                // Dosage and Administration
+  '43685-7': 'warnings',              // Warnings and Precautions
+  '34071-1': 'warnings',              // Warnings (alternative)
+  '34084-4': 'adverse_reactions',     // Adverse Reactions
+  '34073-7': 'drug_interactions',     // Drug Interactions
+  '34090-1': 'clinical_pharmacology', // Clinical Pharmacology
+  '34069-5': 'how_supplied',          // How Supplied
+  '34070-3': 'contraindications',     // Contraindications
+};
+
+/**
+ * Get detailed SPL information by SET ID - FIXED: Now fetches and parses full SPL XML
  */
 export async function getDailyMedSPLDetails(setid: string): Promise<DailyMedDrugInfo | null> {
   try {
-    const apiKey = process.env.NCBI_API_KEY_DAILYMED;
-
     const headers: Record<string, string> = {
       'User-Agent': 'OpenWork-AI/1.0 (Medical Evidence System)',
     };
 
-    if (apiKey) {
-      headers['X-API-Key'] = apiKey;
-    }
+    // Step 1: Fetch the full SPL XML document
+    const splXmlUrl = `https://dailymed.nlm.nih.gov/dailymed/services/v2/spls/${setid}.xml`;
+    console.log(`📄 Fetching SPL XML for ${setid}...`);
 
-    // Get NDC codes and basic info for this SPL
-    const ndcUrl = `https://dailymed.nlm.nih.gov/dailymed/services/v2/spls/${setid}/ndcs.json`;
+    const xmlResponse = await fetch(splXmlUrl, { headers });
 
-    const ndcResponse = await fetch(ndcUrl, { headers });
-
-    if (!ndcResponse.ok) {
-      console.warn(`⚠️ DailyMed NDC fetch failed for ${setid}: ${ndcResponse.status}`);
+    if (!xmlResponse.ok) {
+      console.warn(`⚠️ DailyMed SPL XML fetch failed for ${setid}: ${xmlResponse.status}`);
       return null;
     }
 
-    const ndcData = await ndcResponse.json();
+    const xmlText = await xmlResponse.text();
 
-    if (!ndcData.data) {
-      console.warn(`⚠️ No NDC data found for ${setid}`);
-      return null;
+    // Step 2: Parse LOINC-coded sections from SPL XML
+    const sections = parseSPLSections(xmlText);
+
+    // Step 3: Extract metadata from XML
+    const titleMatch = xmlText.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const dateMatch = xmlText.match(/<effectiveTime[^>]*value="(\d{8})"/i);
+
+    const publishedDate = dateMatch
+      ? `${dateMatch[1].substring(0, 4)}-${dateMatch[1].substring(4, 6)}-${dateMatch[1].substring(6, 8)}`
+      : '';
+
+    // Step 4: Get NDC codes separately (quick API call)
+    let ndcCodes: string[] = [];
+    try {
+      const ndcUrl = `https://dailymed.nlm.nih.gov/dailymed/services/v2/spls/${setid}/ndcs.json`;
+      const ndcResponse = await fetch(ndcUrl, { headers });
+      if (ndcResponse.ok) {
+        const ndcData = await ndcResponse.json();
+        ndcCodes = ndcData.data?.ndcs?.map((ndc: any) => ndc.ndc) || [];
+      }
+    } catch (e) {
+    // NDC fetch failed, continue without
     }
 
-    // Extract basic information from the NDC response
-    const splData = ndcData.data;
-    const ndcCodes = splData.ndcs?.map((ndc: any) => ndc.ndc) || [];
+    const title = titleMatch ? titleMatch[1].trim() : 'Unknown Drug';
 
-    // Parse the basic SPL information
     const drugInfo: DailyMedDrugInfo = {
       setid: setid,
-      title: splData.title || 'Unknown Drug',
-      published_date: splData.published_date || '',
-      active_ingredients: extractActiveIngredientsFromTitle(splData.title),
-      dosage_form: extractDosageFormFromTitle(splData.title),
-      route: extractRouteFromTitle(splData.title),
-      manufacturer: extractManufacturerFromTitle(splData.title),
+      title: title,
+      published_date: publishedDate,
+      active_ingredients: extractActiveIngredientsFromTitle(title),
+      dosage_form: extractDosageFormFromTitle(title),
+      route: extractRouteFromTitle(title),
+      manufacturer: extractManufacturerFromTitle(title),
       ndc_codes: ndcCodes,
-      indications: '', // Would need full SPL XML for detailed sections
-      contraindications: '',
-      warnings: '',
-      dosage: '',
-      adverse_reactions: '',
-      drug_interactions: '',
-      clinical_pharmacology: '',
-      how_supplied: ndcCodes.length > 0 ? `NDC: ${ndcCodes.join(', ')}` : '',
+      indications: sections.indications || '',
+      contraindications: sections.contraindications || '',
+      warnings: sections.warnings || '',
+      dosage: sections.dosage || '',
+      adverse_reactions: sections.adverse_reactions || '',
+      drug_interactions: sections.drug_interactions || '',
+      clinical_pharmacology: sections.clinical_pharmacology || '',
+      how_supplied: sections.how_supplied || (ndcCodes.length > 0 ? `NDC: ${ndcCodes.join(', ')}` : ''),
     };
+
+    // Log success with section counts
+    const filledSections = Object.entries(sections).filter(([_, v]) => v && v.length > 0).length;
+    console.log(`✅ SPL parsed: ${filledSections} sections extracted for ${setid}`);
 
     return drugInfo;
 
@@ -509,6 +565,128 @@ export async function getDailyMedSPLDetails(setid: string): Promise<DailyMedDrug
     console.error(`❌ DailyMed SPL details error for ${setid}:`, error.message);
     return null;
   }
+}
+
+/**
+ * Parse LOINC-coded sections from SPL XML
+ */
+function parseSPLSections(xmlText: string): Record<string, string> {
+  const sections: Record<string, string> = {
+    indications: '',
+    contraindications: '',
+    warnings: '',
+    dosage: '',
+    adverse_reactions: '',
+    drug_interactions: '',
+    clinical_pharmacology: '',
+    how_supplied: '',
+  };
+
+  // Find all component sections with LOINC codes
+  // Pattern: <code code="XXXXX-X" codeSystem="2.16.840.1.113883.6.1"/>
+  for (const [loincCode, sectionName] of Object.entries(LOINC_SECTION_CODES)) {
+    try {
+      // Find section with this LOINC code
+      const sectionPattern = new RegExp(
+        `<code[^>]*code="${loincCode}"[^>]*>.*?</code>.*?<text[^>]*>(.*?)</text>`,
+        'is'
+      );
+
+      const match = xmlText.match(sectionPattern);
+
+      if (match && match[1]) {
+        // Clean up XML/HTML content
+        let content = match[1]
+          .replace(/<[^>]+>/g, ' ')           // Remove XML tags
+          .replace(/&lt;/g, '<')              // Decode entities
+          .replace(/&gt;/g, '>')
+          .replace(/&amp;/g, '&')
+          .replace(/&quot;/g, '"')
+          .replace(/&apos;/g, "'")
+          .replace(/\s+/g, ' ')               // Normalize whitespace
+          .trim();
+
+        // Limit content length (2000 chars max per section)
+        if (content.length > 2000) {
+          content = content.substring(0, 2000) + '...';
+        }
+
+        // Only set if we got meaningful content (>50 chars)
+        if (content.length > 50) {
+          // If section already has content (e.g., warnings from multiple LOINC codes), append
+          if (sections[sectionName] && sections[sectionName].length > 0) {
+            sections[sectionName] += '\n\n' + content;
+          } else {
+            sections[sectionName] = content;
+          }
+        }
+      }
+    } catch (e) {
+      // Continue to next section on error
+    }
+  }
+
+  // Alternative parsing: Look for section titles if LOINC parsing missed them
+  if (!sections.indications) {
+    sections.indications = extractSectionByTitle(xmlText, ['INDICATIONS AND USAGE', 'INDICATIONS']);
+  }
+  if (!sections.warnings) {
+    sections.warnings = extractSectionByTitle(xmlText, ['WARNINGS AND PRECAUTIONS', 'WARNINGS']);
+  }
+  if (!sections.adverse_reactions) {
+    sections.adverse_reactions = extractSectionByTitle(xmlText, ['ADVERSE REACTIONS']);
+  }
+  if (!sections.drug_interactions) {
+    sections.drug_interactions = extractSectionByTitle(xmlText, ['DRUG INTERACTIONS']);
+  }
+  if (!sections.dosage) {
+    sections.dosage = extractSectionByTitle(xmlText, ['DOSAGE AND ADMINISTRATION']);
+  }
+  if (!sections.contraindications) {
+    sections.contraindications = extractSectionByTitle(xmlText, ['CONTRAINDICATIONS']);
+  }
+
+  return sections;
+}
+
+/**
+ * Extract section content by title (fallback when LOINC parsing fails)
+ */
+function extractSectionByTitle(xmlText: string, titleVariants: string[]): string {
+  for (const title of titleVariants) {
+    try {
+      // Look for title element followed by text content
+      const pattern = new RegExp(
+        `<title[^>]*>${title}</title>.*?<text[^>]*>(.*?)</text>`,
+        'is'
+      );
+
+      const match = xmlText.match(pattern);
+
+      if (match && match[1]) {
+        let content = match[1]
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&amp;/g, '&')
+          .replace(/&quot;/g, '"')
+          .replace(/&apos;/g, "'")
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        if (content.length > 2000) {
+          content = content.substring(0, 2000) + '...';
+        }
+
+        if (content.length > 50) {
+          return content;
+        }
+      }
+    } catch (e) {
+      // Continue to next variant
+    }
+  }
+  return '';
 }
 
 /**

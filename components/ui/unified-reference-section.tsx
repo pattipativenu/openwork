@@ -113,14 +113,14 @@ export function UnifiedReferenceSection({ references, mode }: UnifiedReferenceSe
                         </p>
                       )}
                       
-                      {/* Identifiers */}
+                      {/* Identifiers - Clickable Links */}
                       {(ref.pmid || ref.pmcid || ref.doi) && (
                         <p className="text-xs text-gray-500">
-                          {ref.pmid && <span>PMID: {ref.pmid}</span>}
+                          {ref.pmid && <a href={`https://pubmed.ncbi.nlm.nih.gov/${ref.pmid}/`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 hover:underline transition-colors">PMID: {ref.pmid}</a>}
                           {ref.pmid && (ref.pmcid || ref.doi) && ' • '}
-                          {ref.pmcid && <span>PMCID: {ref.pmcid}</span>}
+                          {ref.pmcid && <a href={`https://www.ncbi.nlm.nih.gov/pmc/articles/${ref.pmcid}/`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 hover:underline transition-colors">PMCID: {ref.pmcid}</a>}
                           {ref.pmcid && ref.doi && ' • '}
-                          {ref.doi && <span>DOI: {ref.doi}</span>}
+                          {ref.doi && <a href={`https://doi.org/${ref.doi}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 hover:underline transition-colors">DOI: {ref.doi}</a>}
                         </p>
                       )}
                     </>

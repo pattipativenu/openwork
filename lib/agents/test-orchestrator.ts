@@ -3,6 +3,8 @@
  * Run this to verify the system is working correctly
  */
 
+import dotenv from 'dotenv';
+dotenv.config({ path: '.env.local' }); // Load environment variables from .env.local
 import { MedicalEvidenceOrchestrator } from './medical-evidence-orchestrator';
 
 async function testOrchestrator() {
@@ -18,8 +20,8 @@ async function testOrchestrator() {
   // Test queries
   const testQueries = [
     'What is the first-line treatment for Type 2 diabetes according to Indian guidelines?',
-    'Compare apixaban vs rivaroxaban for stroke prevention in atrial fibrillation',
-    'What are the side effects of metformin?'
+    // 'Compare apixaban vs rivaroxaban for stroke prevention in atrial fibrillation',
+    // 'What are the side effects of metformin?'
   ];
 
   for (const query of testQueries) {

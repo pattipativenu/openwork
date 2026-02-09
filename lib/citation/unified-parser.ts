@@ -84,53 +84,57 @@ function extractReferencesSection(content: string): {
   mainContent: string;
   referencesText: string;
 } {
-  // First, try to find both References and Image References sections
-  const referencePatterns = [
-    /##?\s*References?\s*\n([\s\S]+?)(?=##?\s*Image References?|$)/i,
-    /\*\*References?\*\*\s*\n([\s\S]+?)(?=##?\s*Image References?|$)/i,
-    /References?:?\s*\n([\s\S]+?)(?=##?\s*Image References?|$)/i,
-    /\n\s*References?\s*\n([\s\S]+?)(?=##?\s*Image References?|$)/i
+  // First, identify all potential sections
+  const referenceHeaders = [
+    /##?\s*References?\s*\n/i,
+    /\*\*References?\*\*\s*\n/i,
+    /References?:?\s*\n/i
   ];
-  
-  const imageReferencePatterns = [
-    /##?\s*Image References?\s*\n([\s\S]+)$/i,
-    /\*\*Image References?\*\*\s*\n([\s\S]+)$/i,
-    /Image References?:?\s*\n([\s\S]+)$/i
+
+  const imageReferenceHeaders = [
+    /##?\s*Image References?\s*\n/i,
+    /\*\*Image References?\*\*\s*\n/i,
+    /Image References?:?\s*\n/i
   ];
-  
-  let mainContent = content;
-  let referencesText = '';
-  let imageReferencesText = '';
-  
-  // Extract regular references
-  for (const pattern of referencePatterns) {
-    const match = content.match(pattern);
-    if (match) {
-      mainContent = content.substring(0, match.index).trim();
-      referencesText = match[1].trim();
-      break;
+
+  const followUpHeaders = [
+    /##?\s*Follow-?Up Questions?\s*\n/i,
+    /\*\*Follow-?Up Questions?\*\*\s*\n/i,
+    /Follow-?Up Questions?:?\s*\n/i
+  ];
+
+  // Find the first occurrence of any reference header
+  let firstRefIndex = -1;
+  for (const header of [...referenceHeaders, ...imageReferenceHeaders]) {
+    const match = content.match(header);
+    if (match && (firstRefIndex === -1 || match.index! < firstRefIndex)) {
+      firstRefIndex = match.index!;
     }
   }
-  
-  // Extract image references
-  for (const pattern of imageReferencePatterns) {
-    const match = content.match(pattern);
-    if (match) {
-      imageReferencesText = match[1].trim();
-      // If we haven't found mainContent yet, extract it
-      if (mainContent === content) {
-        mainContent = content.substring(0, match.index).trim();
-      }
-      break;
+
+  if (firstRefIndex === -1) {
+    return { mainContent: content, referencesText: '' };
+  }
+
+  // Determine main content (everything before the first reference section)
+  const mainContent = content.substring(0, firstRefIndex).trim();
+
+  // Extract everything from firstRefIndex until follow-up questions or end of string
+  let referencesContent = content.substring(firstRefIndex);
+
+  let followUpIndex = -1;
+  for (const header of followUpHeaders) {
+    const match = referencesContent.match(header);
+    if (match && (followUpIndex === -1 || match.index! < followUpIndex)) {
+      followUpIndex = match.index!;
     }
   }
-  
-  // Combine both reference sections
-  const combinedReferences = [referencesText, imageReferencesText]
-    .filter(text => text.length > 0)
-    .join('\n\n');
-  
-  return { mainContent, referencesText: combinedReferences };
+
+  const referencesText = followUpIndex !== -1
+    ? referencesContent.substring(0, followUpIndex).trim()
+    : referencesContent.trim();
+
+  return { mainContent, referencesText };
 }
 
 /**
@@ -141,26 +145,43 @@ function parseReferences(referencesText: string, mode: CitationMode): ParsedRefe
   
   const references: ParsedReference[] = [];
   
-  // Split by numbered lines (1., 2., 3., etc.)
-  const refLines = referencesText.split(/\n(?=\d+\.)/);
+  // Split by numbered lines (1., 2., 3. or [1], [2], [3])
+  const refLines = referencesText.split(/\n(?=\s*\d+\.\s|\[\d+\])/);
   
-  refLines.forEach((line, index) => {
+  refLines.forEach((line) => {
     const trimmed = line.trim();
     if (!trimmed) return;
     
-    // Extract reference number
-    const numberMatch = trimmed.match(/^(\d+)\./);
-    const number = numberMatch ? parseInt(numberMatch[1]) : index + 1;
+    // Extract reference number from the string
+    const numMatch = trimmed.match(/^(?:(\d+)\.|\[(\d+)\])/);
+    const extractedNum = numMatch ? parseInt(numMatch[1] || numMatch[2]) : NaN;
+
+    // Fallback to sequential if no number found, but prioritize extracted number
+    // to match inline [[N]] citations
+    const number = isNaN(extractedNum) ? references.length + 1 : extractedNum;
     
     // Parse reference metadata
     const parsed = parseReferenceMetadata(trimmed, number);
     
+    // Only add if we haven't seen this number yet or if it's valid
     if (parsed.isValid) {
-      references.push(parsed);
+      const existingIdx = references.findIndex(r => r.number === parsed.number);
+      if (existingIdx !== -1) {
+        // If duplicate, pick the one with more metadata
+        const existing = references[existingIdx];
+        const currentScore = (parsed.pmid ? 1 : 0) + (parsed.url ? 1 : 0) + (parsed.authors.length > 0 ? 1 : 0);
+        const existingScore = (existing.pmid ? 1 : 0) + (existing.url ? 1 : 0) + (existing.authors.length > 0 ? 1 : 0);
+
+        if (currentScore > existingScore) {
+          references[existingIdx] = parsed;
+        }
+      } else {
+        references.push(parsed);
+      }
     }
   });
   
-  return references;
+  return references.sort((a, b) => a.number - b.number);
 }
 
 /**
@@ -201,8 +222,8 @@ function parseReferenceMetadata(refString: string, number: number): ParsedRefere
     }
   } else {
     // Extract title from plain text (first line or sentence)
-    const titleMatch = refString.match(/^\d+\.\s*(.+?)(?:\.|$)/);
-    title = titleMatch ? titleMatch[1].trim() : refString.replace(/^\d+\.\s*/, '').trim();
+    const titleMatch = refString.match(/^(?:\d+\.|\[\d+\])\s*(.+?)(?:\.|$)/);
+    title = titleMatch ? titleMatch[1].trim() : refString.replace(/^(?:\d+\.|\[\d+\])\s*/, '').trim();
     
     // For image references, try to extract URL from text
     if (imageSource) {
@@ -217,7 +238,7 @@ function parseReferenceMetadata(refString: string, number: number): ParsedRefere
   // Special handling for image references - extract title from the reference text
   if (imageSource) {
     // Try to extract article/image title before "Image from"
-    const imageTitleMatch = refString.match(/^\d+\.\s*(.+?)\.\s*Image from/i);
+    const imageTitleMatch = refString.match(/^(?:\d+\.|\[\d+\])\s*(.+?)\.\s*Image from/i);
     if (imageTitleMatch) {
       title = imageTitleMatch[1].trim();
     } else {
@@ -355,8 +376,9 @@ function parseReferenceMetadata(refString: string, number: number): ParsedRefere
     }
   }
   
-  // Validate reference
-  const isValid = title.length > 5 && (url.length > 0 || pmid !== undefined || doi !== undefined || imageSource !== undefined);
+  // Validate reference - relax title length, prioritize identifiers
+  const isValid = (title.length > 2 || imageSource !== undefined) &&
+    (url.length > 0 || pmid !== undefined || doi !== undefined || imageSource !== undefined);
   
   return {
     id: `ref-${number}`,
@@ -382,42 +404,42 @@ function parseReferenceMetadata(refString: string, number: number): ParsedRefere
 export function cleanCitationMarkers(text: string): string {
   let result = text;
   
+  // 1. Remove bracketed/parenthetical citations that are likely to leave artifacts
+
   // Remove [[N]](url) format
   result = result.replace(/\[\[(\d+)\]\]\((https?:\/\/[^\s\)]+)\)/g, '');
-  
+  // Remove [[N](#)] format (malformed)
+  result = result.replace(/\[\[(\d+)\]\(([^)]+)\)\]/g, '');
   // Remove [[N]] format
   result = result.replace(/\[\[(\d+(?:,\s*\d+)*)\]\]/g, '');
-  
   // Remove [N] format (but not markdown links)
   result = result.replace(/(?<!\[)\[(\d+(?:,\s*\d+)*)\](?!\()/g, '');
-  
   // Remove ^[N]^ format
   result = result.replace(/\^\[(\d+(?:,\s*\d+)*)\]\^/g, '');
-  
-  // Remove standalone ^ symbols
-  result = result.replace(/\^+/g, '');
-  
   // Remove citation numbers in parentheses: ([1], ), ([1]), (1, 2), etc.
   result = result.replace(/\(\[?\d+(?:,\s*\d+)*\]?(?:,\s*)?\)/g, '');
-  
   // Remove citation numbers with brackets followed by comma and space: [[1], ], [1], 
   result = result.replace(/\[?\[?\d+(?:,\s*\d+)*\]?\]?(?:,\s*)+/g, '');
+
+  // 2. Clean up punctuation and spacing artifacts
   
-  // Remove trailing commas and spaces that might be left over
-  result = result.replace(/,\s*\./g, '.');
-  result = result.replace(/\s+,/g, ',');
-  result = result.replace(/,\s*,/g, ',');
+  // Remove spaces before periods/commas (caused by removed citations)
+  result = result.replace(/\s+([.,;!])/g, '$1');
   
-  // Remove standalone closing brackets ] that aren't part of markdown links
-  // This fixes the stray ] appearing at end of sentences in General Mode
-  result = result.replace(/\s+\]\s*/g, ' ');
-  result = result.replace(/\]\s*\./g, '.');
-  result = result.replace(/\]\s*,/g, ',');
-  result = result.replace(/\]\s*$/gm, '');
-  
-  // Clean up multiple spaces
+  // Fix multiple spaces
   result = result.replace(/\s{2,}/g, ' ');
   
+  // Remove empty parentheses/brackets left over (e.g., "( )" or "[ ]")
+  result = result.replace(/\(\s*\)/g, '');
+  result = result.replace(/\[\s*\]/g, '');
+
+  // Remove standalone ^ symbols
+  result = result.replace(/\^+/g, '');
+
+  // Remove trailing commas and spaces that might be left over before a period
+  result = result.replace(/,\s*\./g, '.');
+
+  // Final trim and cleanup
   return result.trim();
 }
 
@@ -429,6 +451,7 @@ export function extractCitationNumbers(text: string): number[] {
   
   const patterns = [
     /\[\[(\d+(?:,\s*\d+)*)\]\]\((https?:\/\/[^\s\)]+)\)/g,  // [[1]](url)
+    /\[\[(\d+)\]\(([^)]+)\)\]/g,                            // [[1](#)] (malformed)
     /\[\[(\d+(?:,\s*\d+)*)\]\]/g,                           // [[1]]
     /(?<!\[)\[(\d+(?:,\s*\d+)*)\](?!\()/g,                  // [1]
     /\^\[(\d+(?:,\s*\d+)*)\]\^/g                            // ^[1]^

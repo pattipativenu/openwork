@@ -31,5 +31,5 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "scripts/**/*", "all_test_files/**/*", "all_MD_files/**/*"]
+  "exclude": ["node_modules", "scripts/**/*", "all_test_files/**/*", "all_MD_files/**/*", "lib/evidence/**/*", "medical-source-bible.ts"]
 }

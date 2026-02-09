@@ -205,7 +205,7 @@ export default function MarkdownTypewriter({
       style={{ maxWidth: '100%' }}
     >
       <ReactMarkdown
-        rehypePlugins={[rehypeRaw]}
+        rehypePlugins={[rehypeRaw as any]}
         components={{
           h1: ({ children }) => (
             <h1 

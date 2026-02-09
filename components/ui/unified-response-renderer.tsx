@@ -251,7 +251,7 @@ export function UnifiedResponseRenderer({
                 className="w-full text-left p-4 bg-white border border-gray-200 rounded-lg hover:border-blue-400 hover:bg-blue-50 transition-all duration-200 group cursor-pointer"
               >
                 <div className="flex items-start gap-3">
-                  <span className="text-gray-400 group-hover:text-blue-600 mt-0.5 transition-colors">•</span>
+                  <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs font-bold shrink-0 group-hover:bg-blue-200 transition-colors">{idx + 1}</span>
                   <span className="text-gray-700 group-hover:text-gray-900 font-ui text-[15px] leading-relaxed transition-colors">
                     {question}
                   </span>

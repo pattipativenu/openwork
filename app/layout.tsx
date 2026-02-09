@@ -1,51 +1,26 @@
 import type { Metadata } from "next";
-import { Inter, Lora, Playfair_Display } from "next/font/google";
+import { Lato } from "next/font/google";
 import "./globals.css";
 
-// Using Inter as the primary sans-serif font (replaces Geist)
-const geistSans = Inter({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-// Using Inter for monospace as well (replaces Geist_Mono)
-const geistMono = Inter({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-  weight: ["400", "500"],
-});
-
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
-});
-
-const lora = Lora({
-  variable: "--font-lora",
-  subsets: ["latin"],
-});
-
-const playfair = Playfair_Display({
-  variable: "--font-playfair",
-  subsets: ["latin"],
+const lato = Lato({
+  weight: ['300', '400', '700', '900'],
+  subsets: ['latin'],
+  display: 'swap',
 });
 
 export const metadata: Metadata = {
-  title: "OpenWork AI - Medical Research Synthesis Tool",
-  description: "Advanced medical research tool providing evidence synthesis and literature analysis for healthcare professionals.",
+  title: "OpenWork AI - Medical Research Synthesis",
+  description: "Advanced medical research synthesis platform with 7-agent AI system",
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+  }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} ${inter.variable} ${lora.variable} ${playfair.variable} antialiased`}
-        suppressHydrationWarning
-      >
+      <body className={lato.className} style={{ margin: 0, padding: 0 }}>
         {children}
       </body>
     </html>

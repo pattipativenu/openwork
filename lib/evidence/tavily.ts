@@ -10,10 +10,7 @@
  * - Fallback only when internal evidence is insufficient
  * - Filters results to medical sources only
  * - Provides answer + citations for evidence synthesis
- * - OpenTelemetry tracing for observability
  */
-
-import { withToolSpan } from '@/lib/otel';
 
 // Environment variables - accessed at runtime
 const getTavilyApiKey = () => (globalThis as any).process?.env?.TAVILY_API_KEY || "";
@@ -137,7 +134,6 @@ Include specific citations, study names, and publication details when available.
 /**
  * Search Tavily for medical evidence
  * Only searches from trusted medical domains
- * Instrumented with OpenTelemetry for observability
  */
 export async function searchTavilyMedical(
   query: string,
@@ -148,7 +144,7 @@ export async function searchTavilyMedical(
 ): Promise<TavilySearchResult> {
   const { maxResults = 10, includeDomains = TRUSTED_MEDICAL_DOMAINS } = options;
 
-  // Early return if no API key (not traced)
+  // Early return if no API key
   if (!getTavilyApiKey()) {
     console.warn("⚠️ TAVILY_API_KEY not set, skipping Tavily search");
     return {
@@ -159,21 +155,12 @@ export async function searchTavilyMedical(
     };
   }
 
-  // Wrap the actual search in a traced span
-  return withToolSpan<TavilySearchResult>(
-    'tavily',
-    'search',
-    async (span) => {
-      const startTime = Date.now();
+  const startTime = Date.now();
 
-      console.log("🔍 Tavily: Searching trusted medical sources...");
-      console.log(`   Query: "${query}"`); // Show full query, not truncated
+  console.log("🔍 Tavily: Searching trusted medical sources...");
+  console.log(`   Query: "${query}"`); // Show full query, not truncated
 
-      // Set input attributes for the span
-      span.setAttribute('input.query', query.substring(0, 500));
-      span.setAttribute('input.max_results', maxResults);
-
-      try {
+  try {
         // FIXED: Use full query instead of truncating - Tavily can handle longer queries
         // Only truncate if absolutely necessary (>500 chars) to avoid losing important context
         const searchQuery = query.length > 500 ? query.substring(0, 497) + '...' : query;
@@ -252,15 +239,6 @@ export async function searchTavilyMedical(
 
         console.log(`✅ Tavily: ${citations.length} trusted medical citations after filtering`);
 
-        // Set output attributes for the span
-        span.setAttribute('output.citation_count', citations.length);
-        span.setAttribute('output.response_time_ms', responseTime);
-        span.setAttribute('output.has_answer', answer.length > 0);
-
-        // Store citation URLs for eval (truncated)
-        const citationUrls = citations.slice(0, 5).map(c => c.url).join(', ');
-        span.setAttribute('output.citation_urls', citationUrls);
-
         return {
           answer,
           citations,
@@ -278,9 +256,6 @@ export async function searchTavilyMedical(
           responseTime: Date.now() - startTime,
         };
       }
-    },
-    { 'input.query': query.substring(0, 200) }
-  );
 }
 
 /**

@@ -26,6 +26,8 @@ export interface AgentResult<T = any> {
 // Agent 1: Query Intelligence Output
 export interface QueryAnalysis {
   intent: 'clinical_decision' | 'education' | 'drug_information' | 'diagnostics';
+  // Optional human-readable query type label (for logging / analytics)
+  query_type?: string;
   entities: {
     diseases: string[];
     drugs: string[];
@@ -63,6 +65,8 @@ export interface QueryAnalysis {
     dailymed: boolean;
     recent_web: boolean;
   };
+  // Optional list of medical specialties/domains inferred from the query
+  medical_domains?: string[];
   temporal_markers: string[];
   complexity_score: number; // 0-1, determines if Pro model needed
 }

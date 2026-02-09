@@ -109,6 +109,37 @@ def analyze_chunk_document(doc):
                 chunk_info[field_name] = f"Vector with {len(array_values)} dimensions"
             else:
                 chunk_info[field_name] = f"Array with {len(array_values)} items"
+        elif 'mapValue' in field_data:
+            map_val = field_data['mapValue']
+            if field_name == 'embedding_vector':
+                # Try to find vector data inside the map
+                fields_in_map = map_val.get('fields', {})
+                chunk_info[field_name] = f"Map with fields: {list(fields_in_map.keys())}"
+                if 'value' in fields_in_map:
+                    val_field = fields_in_map['value']
+                    # Check if value is a list/array
+                    if 'listValue' in val_field:
+                         items = val_field['listValue'].get('values', [])
+                         chunk_info[field_name] = f"Vector (Map->value->List) with {len(items)} dimensions"
+                    elif 'arrayValue' in val_field:
+                         items = val_field['arrayValue'].get('values', [])
+                         chunk_info[field_name] = f"Vector (Map->value->Array) with {len(items)} dimensions"
+                    elif 'bytesValue' in val_field:
+                         # Maybe raw bytes?
+                         chunk_info[field_name] = f"Vector (Bytes) length {len(val_field['bytesValue'])}"
+                    else:
+                         chunk_info[field_name] = f"Vector (Map->value->{list(val_field.keys())[0]})"
+                elif 'values' in fields_in_map:
+                    # It might be values -> listValue?
+                    values_field = fields_in_map['values']
+                    if 'listValue' in values_field:
+                         items = values_field['listValue'].get('values', [])
+                         chunk_info[field_name] = f"Vector (Map->List) with {len(items)} dimensions"
+                    elif 'arrayValue' in values_field:
+                         items = values_field['arrayValue'].get('values', [])
+                         chunk_info[field_name] = f"Vector (Map->Array) with {len(items)} dimensions"
+            else:
+                 chunk_info[field_name] = "Type: mapValue"
         else:
             chunk_info[field_name] = f"Type: {list(field_data.keys())[0]}"
     

@@ -5,8 +5,9 @@
  */
 
 import { TraceContext } from '../types';
-import { logRetrieval } from '../../observability/arize-client';
+import { withRetrieverSpan, SpanStatusCode } from '../../otel';
 import { FULLTEXT_FETCHER_SYSTEM_PROMPT } from '../system-prompts/fulltext-fetcher-prompt';
+import { callGeminiWithRetry } from '../../utils/gemini-rate-limiter';
 
 export interface FullTextSections {
   [sectionName: string]: string;
@@ -27,6 +28,7 @@ export interface SelectedSection {
   section_type: string;
   relevance_score: number;
   content_summary: string;
+  full_content: string;
   chunk_count: number;
   chunks: ContentChunk[];
 }
@@ -59,16 +61,152 @@ export class FullTextFetcher {
   private ncbiApiKey: string;
   private unpaywallEmail = 'research@openwork.ai';
   private systemPrompt: string;
+  private genAI: any;
+  private modelName: string;
 
   constructor(apiKey: string) {
     this.ncbiApiKey = apiKey;
+    this.modelName = 'gemini-3-flash-preview';
+    
+    // Initialize Gemini for intelligent section selection
+    if (process.env.GEMINI_API_KEY) {
+      const { GoogleGenAI } = require('@google/genai');
+      this.genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+    } else {
+      this.genAI = null;
+      console.warn('⚠️ GEMINI_API_KEY not set - FullText Fetcher will use basic section selection');
+    }
+    
+    // Import system prompt
+    const { FULLTEXT_FETCHER_SYSTEM_PROMPT } = require('../system-prompts/fulltext-fetcher-prompt');
     this.systemPrompt = FULLTEXT_FETCHER_SYSTEM_PROMPT;
   }
 
-  async fetchFullText(article: any, originalQuery: string): Promise<EnhancedArticle> {
-    const startTime = Date.now();
-    
+  /**
+   * Score sections for relevance using Gemini 3 Flash (thinking_level: low)
+   */
+  private async scoreSections(sections: any[], query: string): Promise<any[]> {
+    if (!this.genAI || sections.length === 0) {
+      // Fallback to basic scoring
+      return sections.map(section => ({
+        ...section,
+        relevance_score: this.getSectionTypeScore(section.type) * 0.8
+      }));
+    }
+
     try {
+      const sectionsPreview = sections.slice(0, 10).map((s, idx) => 
+        `[${idx}] ${s.title} (${s.type}) - ${s.content.substring(0, 100)}...`
+      ).join('\n\n');
+
+      const prompt = `Score these article sections for relevance to the query (0.0-1.0). Return format: "index:score" (e.g., "0:0.9,1:0.7,2:0.85").
+
+Query: ${query}
+
+Sections:
+${sectionsPreview}
+
+Scores:`;
+
+      // CRITICAL FIX: Use rate limiter with multi-key support
+      const response = await callGeminiWithRetry(async (apiKey: string) => {
+        const genAI = new GoogleGenAI({ apiKey });
+        return await genAI.models.generateContent({
+          model: this.modelName,
+          contents: prompt,
+          config: {
+            systemInstruction: 'You are a medical content relevance specialist. Score sections based on query relevance.',
+            temperature: 0.1,
+            maxOutputTokens: 100,
+            thinkingConfig: {
+              thinkingLevel: 'low' // Straightforward relevance scoring
+            }
+          }
+        });
+      });
+
+      const scoresText = response.text?.trim() || '';
+      const scoreMap = new Map<number, number>();
+      
+      // Parse scores
+      const pairs = scoresText.split(',');
+      pairs.forEach((pair: string) => {
+        const [indexStr, scoreStr] = pair.split(':').map(s => s.trim());
+        const index = parseInt(indexStr);
+        const score = parseFloat(scoreStr);
+        if (!isNaN(index) && !isNaN(score) && index < sections.length) {
+          scoreMap.set(index, score);
+        }
+      });
+
+      // Apply scores
+      const scoredSections = sections.map((section, idx) => ({
+        ...section,
+        relevance_score: scoreMap.get(idx) || this.getSectionTypeScore(section.type) * 0.5
+      }));
+
+      console.log(`   📊 LLM scored ${scoreMap.size} sections`);
+      return scoredSections;
+    } catch (error) {
+      console.warn('⚠️ LLM scoring failed, using basic scores:', error);
+      return sections.map(section => ({
+        ...section,
+        relevance_score: this.getSectionTypeScore(section.type) * 0.8
+      }));
+    }
+  }
+
+  /**
+   * Select top sections using Gemini 3 Flash (thinking_level: minimal)
+   */
+  private async selectTopSections(sections: any[], query: string, maxSections: number = 3): Promise<SelectedSection[]> {
+    if (sections.length === 0) return [];
+    
+    // Score sections first
+    const scoredSections = await this.scoreSections(sections, query);
+    
+    // Sort by composite score and select top sections
+    scoredSections.sort((a, b) => b.relevance_score - a.relevance_score);
+    const selectedSections = scoredSections.slice(0, maxSections);
+    
+    // Convert to SelectedSection format — preserve full content for chunking
+    return selectedSections.map(section => ({
+      section_title: section.title,
+      section_type: section.type,
+      relevance_score: section.relevance_score,
+      content_summary: section.content.substring(0, 200) + '...',
+      full_content: section.content,
+      chunk_count: 0,
+      chunks: []
+    }));
+  }
+
+  /**
+   * Get base score for section type
+   */
+  private getSectionTypeScore(sectionType: string): number {
+    const typeScores: Record<string, number> = {
+      'methods': 0.6,
+      'results': 0.9,
+      'discussion': 0.8,
+      'introduction': 0.5,
+      'conclusion': 0.7,
+      'abstract': 0.4,
+      'background': 0.5
+    };
+    return typeScores[sectionType.toLowerCase()] || 0.5;
+  }
+
+  async fetchFullText(article: any, originalQuery: string): Promise<EnhancedArticle> {
+    return await withRetrieverSpan('fulltext_fetcher', async (span) => {
+      const startTime = Date.now();
+      
+      // Set retrieval attributes
+      span.setAttribute('retrieval.source', 'fulltext_fetcher');
+      span.setAttribute('retrieval.query', originalQuery.substring(0, 200));
+      span.setAttribute('retrieval.article_id', article.pmid || article.pmcid || article.doi || 'unknown');
+      
+      try {
       // Step 1: Comprehensive identifier analysis
       const identifiers = this.extractIdentifiers(article);
       
@@ -146,16 +284,45 @@ export class FullTextFetcher {
       };
       
       const latency = Date.now() - startTime;
+      
+      // Set span attributes
+      span.setAttribute('retrieval.latency_ms', latency);
+      span.setAttribute('retrieval.sections_analyzed', sections.length);
+      span.setAttribute('retrieval.sections_selected', selectedSections.length);
+      span.setAttribute('retrieval.total_chunks', contentChunks.length);
+      span.setAttribute('retrieval.full_text_source', source);
+      span.setAttribute('retrieval.has_pdf_url', !!pdfUrl);
+      
       console.log(`📄 Enhanced full-text processing: ${contentChunks.length} chunks from ${selectedSections.length} sections (${latency}ms)`);
       
-      return enhancedArticle;
+      // Convert to documents format for span events
+      const documents = selectedSections.map((s, index) => ({
+        id: s.section_title || `section_${index}`,
+        content: s.content_summary || '',
+        score: s.relevance_score || 1.0,
+        metadata: {
+          section_type: s.section_type,
+          section_title: s.section_title,
+          chunk_count: s.chunk_count || 0
+        }
+      }));
+      
+      return { result: enhancedArticle, documents };
       
     } catch (error) {
       console.error('❌ Enhanced full-text processing failed:', error);
       
+      // Set error attributes
+      span.setAttribute('retrieval.latency_ms', Date.now() - startTime);
+      span.setAttribute('retrieval.error', error instanceof Error ? error.message : 'Unknown error');
+      span.recordException(error as Error);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: error instanceof Error ? error.message : 'Unknown error' });
+      
       // Return minimal enhanced article with available content
-      return this.createFallbackEnhancedArticle(article);
-    }
+      const fallbackArticle = this.createFallbackEnhancedArticle(article);
+      return { result: fallbackArticle, documents: [] };
+      }
+    }, { source: 'fulltext_fetcher' });
   }
 
   private async fetchFromPMC(identifier: string): Promise<FullTextSections | null> {
@@ -336,78 +503,16 @@ export class FullTextFetcher {
     return 'other';
   }
 
-  private async selectTopSections(sections: any[], query: string, maxSections: number = 3): Promise<SelectedSection[]> {
-    if (sections.length === 0) return [];
-    
-    // Score sections based on relevance and type priority
-    const scoredSections = sections.map(section => {
-      const typeScore = this.getSectionTypeScore(section.type);
-      const lengthScore = Math.min(section.length / 1000, 1.0); // Normalize length
-      const relevanceScore = this.calculateSemanticRelevance(section.content, query);
-      
-      const compositeScore = (0.4 * relevanceScore) + (0.3 * typeScore) + (0.2 * lengthScore) + 0.1;
-      
-      return {
-        ...section,
-        relevance_score: compositeScore
-      };
-    });
-    
-    // Sort by composite score and select top sections
-    scoredSections.sort((a, b) => b.relevance_score - a.relevance_score);
-    const selectedSections = scoredSections.slice(0, maxSections);
-    
-    // Convert to SelectedSection format
-    return selectedSections.map(section => ({
-      section_title: section.title,
-      section_type: section.type,
-      relevance_score: section.relevance_score,
-      content_summary: section.content.substring(0, 200) + '...',
-      chunk_count: 0, // Will be updated during chunking
-      chunks: []
-    }));
-  }
-
-  private getSectionTypeScore(type: string): number {
-    const typeScores: { [key: string]: number } = {
-      'results': 1.0,
-      'discussion': 0.9,
-      'conclusion': 0.9,
-      'methods': 0.7,
-      'introduction': 0.6,
-      'abstract': 0.8,
-      'pdf': 0.7,
-      'other': 0.5
-    };
-    
-    return typeScores[type] || 0.5;
-  }
-
-  private calculateSemanticRelevance(content: string, query: string): number {
-    // Simple keyword-based relevance (in production, use embeddings)
-    const queryTerms = query.toLowerCase().split(/\s+/);
-    const contentLower = content.toLowerCase();
-    
-    let matches = 0;
-    for (const term of queryTerms) {
-      if (contentLower.includes(term)) {
-        matches++;
-      }
-    }
-    
-    return Math.min(matches / queryTerms.length, 1.0);
-  }
-
   private async generateHierarchicalChunks(selectedSections: SelectedSection[], article: any): Promise<ContentChunk[]> {
     const allChunks: ContentChunk[] = [];
-    
+
     for (let sectionIndex = 0; sectionIndex < selectedSections.length; sectionIndex++) {
       const section = selectedSections[sectionIndex];
-      
-      // Find the original section content
-      const sectionContent = this.findSectionContent(section.section_title, article);
-      if (!sectionContent) continue;
-      
+
+      // Use the preserved full_content from selectTopSections
+      const sectionContent = section.full_content || section.content_summary;
+      if (!sectionContent || sectionContent.length < 50) continue;
+
       // Generate chunks for this section
       const chunks = this.chunkContent(sectionContent, {
         chunkSize: 1000,
@@ -434,12 +539,6 @@ export class FullTextFetcher {
     }
     
     return allChunks;
-  }
-
-  private findSectionContent(sectionTitle: string, article: any): string | null {
-    // This would need to be enhanced based on the actual article structure
-    // For now, return a placeholder
-    return `Content from section: ${sectionTitle}`;
   }
 
   private chunkContent(content: string, options: { chunkSize: number; overlap: number; preserveBoundaries: boolean }): string[] {
@@ -483,11 +582,13 @@ export class FullTextFetcher {
       content_type: 'text'
     };
     
+    const fallbackContent = article.abstract || article.title || 'No content available';
     const fallbackSection: SelectedSection = {
       section_title: 'Abstract',
       section_type: 'abstract',
       relevance_score: 0.5,
-      content_summary: (article.abstract || article.title || 'No content available').substring(0, 200),
+      content_summary: fallbackContent.substring(0, 200),
+      full_content: fallbackContent,
       chunk_count: 1,
       chunks: [fallbackChunk]
     };

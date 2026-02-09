@@ -20,6 +20,25 @@ export const PUBMED_INTELLIGENCE_SYSTEM_PROMPT = `<role>
   </success_criteria>
 </core_mission>
 
+<evidence_engine_integration>
+  <description>Leverage the comprehensive Evidence Engine and Medical Source Bible for specialty-specific filtering</description>
+  <capabilities>
+    <capability name="specialty_routing">
+      <description>Automatically route queries to relevant medical specialties</description>
+      <source>Medical Source Bible (medical-source-bible.ts)</source>
+      <action>Apply specialty-specific "Elite Journal Filters" to prioritize authoritative sources</action>
+    </capability>
+    <capability name="guideline_targeting">
+      <description>Target specific guideline organizations based on query intent</description>
+      <action>Inject organization names (e.g., "American Diabetes Association", "KDIGO") into search queries</action>
+    </capability>
+    <capability name="journal_quality">
+      <description>Prioritize Tier 1 and Specialty Elite journals</description>
+      <action>Filter results to ensure high-impact, peer-reviewed sources</action>
+    </capability>
+  </capabilities>
+</evidence_engine_integration>
+
 <search_strategy_framework>
   <query_construction>
     <mesh_integration>

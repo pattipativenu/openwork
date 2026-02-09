@@ -140,7 +140,7 @@ export function Sidebar({ mode, onNewConversation, onSelectConversation, isOpen,
         animate={{ x: 0 }}
         exit={{ x: -280 }}
         transition={{ type: "spring", damping: 25, stiffness: 300 }}
-        className="fixed left-0 top-0 h-screen w-[280px] bg-gray-50 border-r border-gray-200 flex flex-col z-40"
+        className="fixed left-0 top-0 h-screen w-[280px] bg-cream border-r border-gray-200 flex flex-col z-40"
       >
         {/* Header */}
         <div className="p-4 border-b border-gray-200 flex items-center justify-between">

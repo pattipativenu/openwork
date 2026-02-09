@@ -4,32 +4,27 @@
  * Uses Gemini 3.0 Flash Thinking for fast analysis
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { QueryAnalysis, TraceContext, AgentResult } from './types';
-import { logAgent } from '../observability/arize-client';
+import { withToolSpan, SpanStatusCode, captureTokenUsage } from '../otel';
+import { callGeminiWithRetry } from '../utils/gemini-rate-limiter';
+
+// Import ThinkingLevel enum
+import { ThinkingLevel } from '@google/genai';
 
 export class QueryIntelligenceAgent {
-  private genAI: GoogleGenerativeAI;
-  private model: any;
-  private fallbackModel: any;
+  private genAI: GoogleGenAI;
+  private modelName: string;
+  private fallbackModelName: string;
+  private systemPrompt: string;
 
   constructor(apiKey: string) {
-    this.genAI = new GoogleGenerativeAI(apiKey);
-    
+    this.genAI = new GoogleGenAI({ apiKey });
+
     // Try Gemini 3.0 first, fallback to 3.0 Flash if overloaded
-    const flashModel = process.env.GEMINI_FLASH_MODEL || 'gemini-3-flash-preview';
-    const fallbackFlash = 'gemini-3-flash-preview';
-    
-    this.model = this.genAI.getGenerativeModel({ 
-      model: flashModel,
-      systemInstruction: this.getSystemPrompt()
-    });
-    
-    // Store fallback model for retry logic
-    this.fallbackModel = this.genAI.getGenerativeModel({
-      model: fallbackFlash,
-      systemInstruction: this.getSystemPrompt()
-    });
+    this.modelName = process.env.GEMINI_FLASH_MODEL || 'gemini-3-flash-preview';
+    this.fallbackModelName = 'gemini-3-flash-preview';
+    this.systemPrompt = this.getSystemPrompt();
   }
 
   private getSystemPrompt(): string {
@@ -55,27 +50,65 @@ export class QueryIntelligenceAgent {
   <description>Deep understanding of each sub-agent's capabilities, data structures, and optimal query formats</description>
   
   <sub_agent name="guidelines_retriever" id="2.1">
-    <data_source>Firestore vector database with Indian clinical practice guidelines</data_source>
-    <indexing>768-dimensional embeddings using Gemini text-embedding-004</indexing>
-    <content_structure>Parent-child section hierarchy, chunk-based storage</content_structure>
-    <organizations>ICMR, RSSDI, API, CSI, ESI, IMA</organizations>
-    <optimal_query_format>Expanded medical terms with Indian context, disease + treatment combinations</optimal_query_format>
+    <data_source>Firestore vector database with Indian clinical practice guidelines (collection: guideline_chunks)</data_source>
+    <indexing>768-dimensional embeddings using Gemini text-embedding-004, cosine similarity search</indexing>
+    <content_structure>Parent-child section hierarchy, chunk-based storage with metadata</content_structure>
+
+    <firestore_schema>
+      <field name="chunk_id" type="string">Unique chunk identifier</field>
+      <field name="guideline_id" type="string">Parent guideline document ID</field>
+      <field name="organization" type="string">Publishing organization (ICMR, API, CSI, ESI, IMA, RSSDI, AIIMS, MCI, PGIMER)</field>
+      <field name="title" type="string">Guideline title</field>
+      <field name="year" type="integer">Publication year (2015-2024)</field>
+      <field name="text" type="string">Chunk content text</field>
+      <field name="embedding_vector" type="vector">768-dimensional embedding</field>
+      <field name="section_header" type="string">Section hierarchy</field>
+    </firestore_schema>
+
+    <organizations>
+      <tier_1>
+        <org abbrev="ICMR" full="Indian Council of Medical Research">National apex body for biomedical research</org>
+        <org abbrev="MCI" full="Medical Council of India">Medical education and practice regulator</org>
+        <org abbrev="AIIMS" full="All India Institute of Medical Sciences">Premier medical institution</org>
+        <org abbrev="PGIMER" full="Post Graduate Institute of Medical Education and Research">Leading medical research center</org>
+      </tier_1>
+      <tier_2>
+        <org abbrev="API" full="Association of Physicians of India">Internal medicine specialists</org>
+        <org abbrev="CSI" full="Cardiological Society of India">Cardiology guidelines</org>
+        <org abbrev="ESI" full="Endocrine Society of India">Endocrinology and diabetes</org>
+        <org abbrev="IMA" full="Indian Medical Association">Largest physician organization</org>
+        <org abbrev="RSSDI" full="Research Society for the Study of Diabetes in India">Diabetes-specific guidelines</org>
+      </tier_2>
+    </organizations>
+
+    <disease_categories_covered>
+      <category>Type 2 Diabetes Mellitus (T2DM) - comprehensive management, metformin protocols</category>
+      <category>Hypertension (HTN) - blood pressure targets, antihypertensive selection</category>
+      <category>Cardiovascular diseases - CAD, heart failure, arrhythmias</category>
+      <category>Thyroid disorders - hypothyroidism, hyperthyroidism management</category>
+      <category>Infectious diseases - tuberculosis, COVID-19, tropical diseases</category>
+      <category>Metabolic syndrome - obesity, dyslipidemia guidelines</category>
+    </disease_categories_covered>
     
     <when_to_call>
-      <condition>User explicitly mentions "guidelines", "guideline", "protocol", "recommendation"</condition>
-      <condition>User mentions Indian organizations: "ICMR", "RSSDI", "API", "Indian"</condition>
-      <condition>User asks "what are the guidelines for..."</condition>
-      <condition>Intent is clinical_decision AND mentions specific country/region</condition>
+      <condition priority="1">User explicitly mentions "Indian guidelines", "India guidelines", "Indian treatment"</condition>
+      <condition priority="2">User mentions Indian organizations: "ICMR", "RSSDI", "API", "CSI", "ESI", "IMA", "AIIMS", "PGIMER"</condition>
+      <condition priority="3">User explicitly asks for guidelines "in India" or "for Indian population"</condition>
     </when_to_call>
     
     <query_rephrasing_strategy>
-      <strategy>Add Indian context and organization names</strategy>
-      <strategy>Expand all abbreviations fully</strategy>
-      <strategy>Include disease + treatment combinations</strategy>
-      <strategy>Add "clinical practice guidelines" terminology</strategy>
+      <strategy>ALWAYS expand medical abbreviations (T2DM → Type 2 Diabetes Mellitus, HTN → Hypertension)</strategy>
+      <strategy>Add Indian organization names (ICMR, RSSDI, API) for better embedding match</strategy>
+      <strategy>Include disease + treatment combinations for specificity</strategy>
+      <strategy>Add "clinical practice guidelines India" or "Indian guidelines" terminology</strategy>
+      <strategy>Include both generic and brand drug names if applicable</strategy>
       <example>
         <original>T2DM first-line treatment</original>
-        <rephrased>Type 2 Diabetes Mellitus first-line treatment India ICMR guidelines Indian population metformin initial therapy</rephrased>
+        <rephrased>Type 2 Diabetes Mellitus first-line treatment India ICMR RSSDI guidelines Indian population metformin initial therapy clinical practice guidelines</rephrased>
+      </example>
+      <example>
+        <original>HTN management</original>
+        <rephrased>Hypertension management guidelines India CSI blood pressure control antihypertensive therapy Indian cardiology society recommendations</rephrased>
       </example>
     </query_rephrasing_strategy>
   </sub_agent>
@@ -781,118 +814,172 @@ THINKING PROCESS:
   }
 
   async analyzeQuery(query: string, traceContext: TraceContext): Promise<AgentResult<QueryAnalysis>> {
-    const startTime = Date.now();
-    let modelUsed = 'gemini-3-flash-preview';
+    return await withToolSpan('query_intelligence', 'execute', async (span) => {
+      const startTime = Date.now();
+      let modelUsed = 'gemini-3-flash-preview';
 
-    try {
+      // Set input attributes
+      span.setAttribute('agent.input', JSON.stringify({ query }));
+      span.setAttribute('agent.name', 'query_intelligence');
+
+      try {
       const prompt = `User Query: ${query}\n\nOutput JSON:`;
       let response;
-      
+
       try {
-        // Try Gemini 3.0 first
-        console.log('🎯 Trying Gemini 3.0 Flash Preview...');
-        response = await this.model.generateContent(prompt, {
-          generationConfig: {
-            temperature: 0.3,
-            responseMimeType: "application/json"
-          }
-        });
-      } catch (primaryError) {
-        // If Gemini 3.0 is overloaded, fallback to 2.5
-        if (primaryError instanceof Error && primaryError.message.includes('overloaded')) {
-          console.log('⚠️ Gemini 3.0 overloaded, falling back to Gemini 3.0 Flash...');
-          modelUsed = 'gemini-3-flash-preview';
-          response = await this.fallbackModel.generateContent(prompt, {
-            generationConfig: {
+        // CRITICAL FIX: Use rate limiter with multi-key support to prevent overload
+        console.log('🎯 Trying Gemini 3.0 Flash Preview with rate limiter...');
+        const queryStartTime = Date.now();
+        response = await callGeminiWithRetry(async (apiKey: string) => {
+          console.log(`📞 Query Intelligence: Making API call with key ${apiKey.substring(0, 10)}...`);
+          const apiCallStart = Date.now();
+          const genAI = new GoogleGenAI({ apiKey });
+          const result = await genAI.models.generateContent({
+            model: this.modelName,
+            contents: prompt,
+            config: {
+              systemInstruction: this.systemPrompt,
               temperature: 0.3,
-              responseMimeType: "application/json"
+              responseMimeType: "application/json",
+              thinkingConfig: {
+                thinkingLevel: ThinkingLevel.LOW // Reduced from HIGH to save 5-8s while maintaining intelligence
+              }
             }
+          });
+          console.log(`✅ Query Intelligence: API call completed in ${Date.now() - apiCallStart}ms`);
+          return result;
+        });
+        console.log(`✅ Query Intelligence: Total time with rate limiter: ${Date.now() - queryStartTime}ms`);
+      } catch (primaryError) {
+        // If still overloaded after retries, try fallback model with rate limiter
+        if (primaryError instanceof Error && (primaryError.message.includes('overloaded') || primaryError.message.includes('Max retries'))) {
+          console.log('⚠️ Primary model overloaded after retries, trying fallback with rate limiter...');
+          modelUsed = this.fallbackModelName;
+          response = await callGeminiWithRetry(async (apiKey: string) => {
+            const genAI = new GoogleGenAI({ apiKey });
+            return await genAI.models.generateContent({
+              model: this.fallbackModelName,
+              contents: prompt,
+              config: {
+                systemInstruction: this.systemPrompt,
+                temperature: 0.3,
+                responseMimeType: "application/json",
+                thinkingConfig: {
+                  thinkingLevel: ThinkingLevel.HIGH // High reasoning (fallback)
+                }
+              }
+            });
           });
         } else {
           throw primaryError;
         }
       }
 
-      const rawResponse = response.response.text();
+        const rawResponse = (response.text || '').trim();
       console.log('🔍 Raw response preview:', rawResponse.substring(0, 200) + '...');
       
-      // Extract JSON from response (handle thinking models that include reasoning)
-      let jsonText = rawResponse;
+        let analysis: QueryAnalysis;
       
-      // If response contains "FINAL JSON OUTPUT:" extract everything after it
-      if (rawResponse.includes('FINAL JSON OUTPUT:')) {
-        const jsonStart = rawResponse.indexOf('FINAL JSON OUTPUT:') + 'FINAL JSON OUTPUT:'.length;
-        jsonText = rawResponse.substring(jsonStart).trim();
-      }
-      
-      // If response starts with "THINKING PROCESS:" find the JSON part
-      if (rawResponse.startsWith('THINKING PROCESS:')) {
-        const jsonMatch = rawResponse.match(/\{[\s\S]*\}$/);
-        if (jsonMatch) {
-          jsonText = jsonMatch[0];
+        try {
+          const jsonText = this.cleanJsonOutput(rawResponse);
+          console.log('📝 Extracted JSON:', jsonText.substring(0, 200) + '...');
+          analysis = JSON.parse(jsonText) as QueryAnalysis;
+        } catch (parseError) {
+          console.warn('⚠️ Query analysis JSON parsing failed, using fallback:', parseError);
+          console.warn('Raw response for debugging:', rawResponse);
+
+          // Fallback: assume general query with no filters
+          analysis = {
+            intent: 'clinical_decision',
+            entities: { diseases: [], drugs: [], procedures: [] },
+            abbreviations_expanded: {},
+            search_variants: [query],
+            sub_agent_queries: {
+              pubmed: { should_call: true, rephrased_queries: [query], reasoning: 'Fallback due to parsing error' },
+              guidelines: { should_call: true, rephrased_queries: [query], reasoning: 'Fallback due to parsing error' }
+            },
+            requires_sources: { pubmed: true, guidelines: true, dailymed: false, recent_web: false },
+            temporal_markers: [],
+            complexity_score: 0.5
+          } as unknown as QueryAnalysis; // Cast to satisfy strict type if needed, or adjust fallback to match type
         }
-      }
-      
-      // Clean up any markdown code blocks
-      jsonText = jsonText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      
-      console.log('📝 Extracted JSON:', jsonText.substring(0, 200) + '...');
-      
-      const analysis = JSON.parse(jsonText) as QueryAnalysis;
       const latency = Date.now() - startTime;
 
       // Calculate cost (approximate)
       const tokens = {
-        input: response.response.usageMetadata?.promptTokenCount || 500,
-        output: response.response.usageMetadata?.candidatesTokenCount || 800,
-        total: response.response.usageMetadata?.totalTokenCount || 1300
+        input: response.usageMetadata?.promptTokenCount || 500,
+        output: response.usageMetadata?.candidatesTokenCount || 800,
+        total: response.usageMetadata?.totalTokenCount || 1300
       };
 
       const cost = this.calculateCost(tokens);
 
-      const result: AgentResult<QueryAnalysis> = {
-        success: true,
-        data: analysis,
-        latency_ms: latency,
-        tokens,
-        cost_usd: cost
-      };
+        const result: AgentResult<QueryAnalysis> = {
+          success: true,
+          data: analysis,
+          latency_ms: latency,
+          tokens,
+          cost_usd: cost
+        };
 
-      console.log(`✅ Query analysis completed using ${modelUsed}`);
+        console.log(`✅ Query analysis completed using ${modelUsed}`);
 
-      // Log to Arize
-      await logAgent(
-        'query_intelligence',
-        traceContext,
-        { query },
-        analysis,
-        result,
-        modelUsed
-      );
+        // Set span attributes
+        span.setAttribute('agent.output', JSON.stringify(analysis));
+        span.setAttribute('agent.latency_ms', latency);
+        span.setAttribute('agent.cost_usd', cost);
+        span.setAttribute('agent.model_name', modelUsed);
+        span.setAttribute('agent.success', true);
+        captureTokenUsage(span, tokens, modelUsed);
 
-      return result;
+        return result;
 
-    } catch (error) {
-      console.error(`❌ Query analysis failed with ${modelUsed}:`, error);
-      const latency = Date.now() - startTime;
-      const result: AgentResult<QueryAnalysis> = {
-        success: false,
-        data: {} as QueryAnalysis,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        latency_ms: latency
-      };
+      } catch (error) {
+        console.error(`❌ Query analysis failed with ${modelUsed}:`, error);
+        const latency = Date.now() - startTime;
+        const result: AgentResult<QueryAnalysis> = {
+          success: false,
+          data: {} as QueryAnalysis,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          latency_ms: latency
+        };
 
-      await logAgent(
-        'query_intelligence',
-        traceContext,
-        { query },
-        { error: result.error },
-        result,
-        modelUsed
-      );
+        // Set error attributes
+        span.setAttribute('agent.success', false);
+        span.setAttribute('agent.error', result.error || 'Unknown error');
+        span.setAttribute('agent.latency_ms', latency);
+        span.recordException(error as Error);
+        span.setStatus({ code: SpanStatusCode.ERROR, message: result.error || 'Unknown error' });
 
-      return result;
+        return result;
+      }
+    });
+  }
+
+  private cleanJsonOutput(text: string): string {
+    let clean = text.trim();
+
+    // 1. Handle "FINAL JSON OUTPUT:" marker
+    if (clean.includes('FINAL JSON OUTPUT:')) {
+      clean = clean.split('FINAL JSON OUTPUT:')[1].trim();
     }
+
+    // 2. Remove markdown code blocks (```json ... ``` or just ``` ... ```)
+    // Use a regex that captures content inside code blocks
+    const codeBlockMatch = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (codeBlockMatch) {
+      clean = codeBlockMatch[1].trim();
+    }
+
+    // 3. Find the first '{' and last '}' to strip any remaining conversational text
+    const firstBrace = clean.indexOf('{');
+    const lastBrace = clean.lastIndexOf('}');
+
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      clean = clean.substring(firstBrace, lastBrace + 1);
+    }
+
+    return clean;
   }
 
   private calculateCost(tokens: { input: number; output: number }): number {

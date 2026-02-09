@@ -7,11 +7,9 @@
  * - With API key: 10 requests/second
  * 
  * IMPORTANT: Add delays between requests to avoid 429 errors
- * Instrumented with OpenTelemetry for observability
  */
 
 import { getCachedEvidence, cacheEvidence } from './cache-manager';
-import { withToolSpan } from '@/lib/otel';
 
 const EUTILS_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
 const API_KEY = process.env.NCBI_API_KEY || "";
@@ -99,17 +97,11 @@ function buildFilterString(filters?: PubMedFilters): string {
 
   const filterParts: string[] = [];
 
-  // CRITICAL ENHANCEMENT: Recent data prioritization (2025/2024/2023 first)
-  if (filters.yearsBack !== undefined) {
-    const currentYear = new Date().getFullYear();
-    const startYear = currentYear - filters.yearsBack;
-    filterParts.push(`${startYear}:${currentYear}[dp]`);
-  } else {
-    // DEFAULT: Prioritize last 3 years (2023-2025) if no specific filter
-    const currentYear = new Date().getFullYear();
-    const startYear = currentYear - 2; // 2023 if current year is 2025
-    filterParts.push(`${startYear}:${currentYear}[dp]`);
-  }
+  // Single date filter: avoid duplicate. Prefer yearsBack when provided.
+  const currentYear = new Date().getFullYear();
+  const yearsBack = filters.yearsBack !== undefined ? filters.yearsBack : 15;
+  const startYear = currentYear - yearsBack;
+  filterParts.push(`${startYear}:${currentYear}[dp]`);
 
   // Article type filters
   if (filters.articleTypes && filters.articleTypes.length > 0) {
@@ -136,13 +128,6 @@ function buildFilterString(filters?: PubMedFilters): string {
     if (typeFilters.length > 0) {
       filterParts.push(`(${typeFilters.join(' OR ')})`);
     }
-  }
-
-  // Date filter - last N years
-  if (filters.yearsBack) {
-    const currentYear = new Date().getFullYear();
-    const startYear = currentYear - filters.yearsBack;
-    filterParts.push(`${startYear}:${currentYear}[dp]`);
   }
 
   // Humans only - STRICT FILTER
@@ -189,7 +174,6 @@ function buildFilterString(filters?: PubMedFilters): string {
 /**
  * Search PubMed using ESearch with advanced filters
  * Returns PMIDs matching the query
- * Instrumented with OpenTelemetry for observability
  */
 export async function searchPubMed(
   query: string,
@@ -197,101 +181,90 @@ export async function searchPubMed(
   useHistory: boolean = true, // Always default to true now
   filters?: PubMedFilters
 ): Promise<PubMedSearchResult> {
-  return withToolSpan<PubMedSearchResult>(
-    'pubmed',
-    'search',
-    async (span) => {
-      try {
-        // Apply filters to query
-        const filterString = buildFilterString(filters);
-        const enhancedQuery = query + filterString;
+  try {
+    // Apply filters to query
+    const filterString = buildFilterString(filters);
+    const enhancedQuery = query + filterString;
 
-        console.log(`🔍 PubMed search: "${query}"${filterString ? ` with filters: ${filterString}` : ''}`);
+    console.log(`🔍 PubMed search: "${query}"${filterString ? ` with filters: ${filterString}` : ''}`);
 
-        span.setAttribute('input.query', query.substring(0, 500));
-        span.setAttribute('input.max_results', maxResults);
-        if (filterString) {
-          span.setAttribute('input.filters', filterString.substring(0, 200));
-        }
+    // STEP 1: ESearch with usehistory=y to get WebEnv/QueryKey (and first batch of IDs if retmax > 0)
+    // We set retmax=0 to just get the history pointer first, then fetch in batches
+    const params = new URLSearchParams({
+      db: "pubmed",
+      term: enhancedQuery,
+      retmode: "json",
+      retmax: "0",
+      usehistory: "y",
+      sort: "relevance",
+      ...(API_KEY && { api_key: API_KEY }),
+    });
 
-        // STEP 1: ESearch with usehistory=y to get WebEnv/QueryKey (and first batch of IDs if retmax > 0)
-        // We set retmax=0 to just get the history pointer first, then fetch in batches
-        const params = new URLSearchParams({
-          db: "pubmed",
-          term: enhancedQuery,
-          retmode: "json",
-          retmax: "0",
-          usehistory: "y",
-          sort: "relevance",
-          ...(API_KEY && { api_key: API_KEY }),
-        });
+    const url = `${EUTILS_BASE}/esearch.fcgi?${params}`;
+    console.log(`🔍 PubMed search executing: "${query.substring(0, 100)}..."`);
+    console.log(`   Full query: "${enhancedQuery.substring(0, 200)}..."`);
+    const response = await fetchWithRateLimit(url);
 
-        const url = `${EUTILS_BASE}/esearch.fcgi?${params}`;
-        const response = await fetchWithRateLimit(url);
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      console.error(`❌ PubMed ESearch error: ${response.status} - ${errorText.substring(0, 200)}`);
+      return { count: 0, pmids: [] };
+    }
 
-        if (!response.ok) {
-          console.error("PubMed ESearch error:", response.status);
-          span.setAttribute('error.status_code', response.status);
-          return { count: 0, pmids: [] };
-        }
+    const data = await response.json();
+    const result = data.esearchresult;
+    const count = parseInt(result.count || "0");
+    const webEnv = result.webenv;
+    const queryKey = result.querykey;
 
-        const data = await response.json();
-        const result = data.esearchresult;
-        const count = parseInt(result.count || "0");
-        const webEnv = result.webenv;
-        const queryKey = result.querykey;
+    console.log(`✅ PubMed search found ${count} articles for query: "${query.substring(0, 80)}..."`);
+    if (count === 0) {
+      console.warn(`⚠️ PubMed returned 0 results - query might be too narrow or filters too strict`);
+    }
 
-        console.log(`✅ Found ${count} PubMed articles (WebEnv: ${webEnv})`);
+    if (count === 0 || !webEnv || !queryKey) {
+      return { count: 0, pmids: [], webEnv, queryKey };
+    }
 
-        if (count === 0 || !webEnv || !queryKey) {
-          return { count: 0, pmids: [], webEnv, queryKey };
-        }
+    // STEP 2: Fetch PMIDs in batches using History
+    const pmids: string[] = [];
+    const batchSize = 500;
+    const finalMax = maxResults < count ? maxResults : count;
 
-        // STEP 2: Fetch PMIDs in batches using History
-        const pmids: string[] = [];
-        const batchSize = 500;
-        const finalMax = maxResults < count ? maxResults : count;
+    for (let start = 0; start < finalMax; start += batchSize) {
+      const batchLimit = Math.min(batchSize, finalMax - start);
 
-        for (let start = 0; start < finalMax; start += batchSize) {
-          const batchLimit = Math.min(batchSize, finalMax - start);
+      const searchParams = new URLSearchParams({
+        db: "pubmed",
+        WebEnv: webEnv,
+        query_key: queryKey,
+        retstart: start.toString(),
+        retmax: batchLimit.toString(),
+        retmode: "json",
+        ...(API_KEY && { api_key: API_KEY }),
+      });
 
-          const searchParams = new URLSearchParams({
-            db: "pubmed",
-            WebEnv: webEnv,
-            query_key: queryKey,
-            retstart: start.toString(),
-            retmax: batchLimit.toString(),
-            retmode: "json",
-            ...(API_KEY && { api_key: API_KEY }),
-          });
+      // ESearch again to retrieve IDs from history
+      const batchUrl = `${EUTILS_BASE}/esearch.fcgi?${searchParams}`;
+      const batchResponse = await fetchWithRateLimit(batchUrl);
 
-          // ESearch again to retrieve IDs from history
-          const batchUrl = `${EUTILS_BASE}/esearch.fcgi?${searchParams}`;
-          const batchResponse = await fetchWithRateLimit(batchUrl);
-
-          if (batchResponse.ok) {
-            const batchData = await batchResponse.json();
-            const batchIds = batchData.esearchresult?.idlist || [];
-            pmids.push(...batchIds);
-          }
-        }
-
-        span.setAttribute('output.total_count', count);
-        span.setAttribute('output.pmid_count', pmids.length);
-
-        return {
-          count,
-          pmids,
-          webEnv,
-          queryKey,
-        };
-      } catch (error) {
-        console.error("Error searching PubMed:", error);
-        return { count: 0, pmids: [] };
+      if (batchResponse.ok) {
+        const batchData = await batchResponse.json();
+        const batchIds = batchData.esearchresult?.idlist || [];
+        pmids.push(...batchIds);
       }
-    },
-    { 'input.query': query.substring(0, 200) }
-  );
+    }
+
+    return {
+      count,
+      pmids,
+      webEnv,
+      queryKey,
+    };
+  } catch (error) {
+    console.error("Error searching PubMed:", error);
+    return { count: 0, pmids: [] };
+  }
 }
 
 /**
@@ -688,18 +661,20 @@ export async function searchAuthoritativeSources(
 export async function comprehensivePubMedSearch(
   query: string,
   isGuidelineQuery: boolean = false,
-  guidelineBodies: string[] = []
+  guidelineBodies: string[] = [],
+  journalFilter: string = ''
 ): Promise<{ articles: PubMedArticle[]; systematicReviews: PubMedArticle[]; guidelines: PubMedArticle[] }> {
   // PHASE 1 ENHANCEMENT: Check cache first
   // Error handling: If cache fails, continue with API call (graceful degradation)
   try {
+    const cacheKey = journalFilter ? `${query}_${journalFilter}` : query;
     const cached = await getCachedEvidence<{ articles: PubMedArticle[]; systematicReviews: PubMedArticle[]; guidelines: PubMedArticle[] }>(
-      query,
+      cacheKey,
       'pubmed'
     );
 
     if (cached) {
-      console.log(`📬 Using cached PubMed results for query`);
+      console.log(`📬 Using cached PubMed results for query (filter: ${!!journalFilter})`);
       return cached.data;
     }
   } catch (error: any) {
@@ -715,15 +690,31 @@ export async function comprehensivePubMedSearch(
 
   // Build search promises
   // INCREASED LIMITS: Get MANY more candidates to ensure high relevance after filtering
+  console.log(`📚 comprehensivePubMedSearch: Starting searches for query: "${query.substring(0, 100)}..." (Filter: ${journalFilter ? 'Active' : 'None'})`);
+
+  // Apply journal filter to the general search if provided
+  const generalQuery = journalFilter ? `${query} AND ${journalFilter}` : query;
+
   const searchPromises: Promise<any>[] = [
-    // General search with quality filters - INCREASED from 15 to 50
-    searchPubMed(query, 50, false, {
+    // General search: 15 years + humans; avoid hasAbstract to maximize hits (we can filter later)
+    searchPubMed(generalQuery, 50, false, {
       humansOnly: true,
-      yearsBack: 10,
-      hasAbstract: true,
+      yearsBack: 15,
+    }).then(result => {
+      console.log(`📚 General PubMed search returned: ${result.count} total matches, ${result.pmids.length} PMIDs fetched`);
+      return result;
+    }).catch(err => {
+      console.error(`❌ General PubMed search failed:`, err);
+      return { count: 0, pmids: [] };
     }),
     // Systematic reviews - INCREASED from 8 to 20
-    searchSystematicReviews(query, 20),
+    searchSystematicReviews(query, 20).then(result => {
+      console.log(`📚 Systematic reviews search returned: ${result.length} reviews`);
+      return result;
+    }).catch(err => {
+      console.error(`❌ Systematic reviews search failed:`, err);
+      return [];
+    }),
   ];
 
   // Add guideline search for guideline queries or lifestyle/prevention queries
@@ -743,7 +734,15 @@ export async function comprehensivePubMedSearch(
     searchPromises.push(searchAuthoritativeSources(query, 25)); // INCREASED from 12 to 25
   }
 
+  // #region debug log
+  fetch('http://127.0.0.1:7243/ingest/7927b0b4-4494-4712-9407-b89fa1704153', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'pubmed.ts:726', message: 'comprehensivePubMedSearch executing', data: { query: query.substring(0, 100), searchPromises: searchPromises.length, isGuidelineQuery, guidelineBodies, timestamp: Date.now() }, timestamp: Date.now() }) }).catch(() => { });
+  // #endregion
+
   const results = await Promise.all(searchPromises);
+
+  // #region debug log
+  fetch('http://127.0.0.1:7243/ingest/7927b0b4-4494-4712-9407-b89fa1704153', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'pubmed.ts:730', message: 'comprehensivePubMedSearch results received', data: { resultCount: results.length, timestamp: Date.now() }, timestamp: Date.now() }) }).catch(() => { });
+  // #endregion
 
   // Handle variable number of results based on whether we searched for organization guidelines
   let generalSearch, reviewsSearch, guidelinesSearch, authoritativeSearch, orgGuidelinesSearch;
@@ -755,9 +754,20 @@ export async function comprehensivePubMedSearch(
     orgGuidelinesSearch = [];
   }
 
-  const articles = generalSearch.pmids.length > 0
-    ? await fetchPubMedSummaries(generalSearch.pmids)
+  console.log(`📚 Processing PubMed results: generalSearch has ${generalSearch.pmids?.length || 0} PMIDs`);
+  const articles = (generalSearch?.pmids && generalSearch.pmids.length > 0)
+    ? await fetchPubMedSummaries(generalSearch.pmids).then(arts => {
+      console.log(`📚 Fetched ${arts.length} article summaries from PubMed`);
+      return arts;
+    }).catch(err => {
+      console.error(`❌ Failed to fetch PubMed summaries:`, err);
+      return [];
+    })
     : [];
+
+  if (articles.length === 0 && (generalSearch?.pmids?.length || 0) > 0) {
+    console.warn(`⚠️ Warning: Had ${generalSearch.pmids.length} PMIDs but fetched 0 articles - fetchPubMedSummaries may have failed`);
+  }
 
   // Combine guidelines from all searches if available
   let guidelines: PubMedArticle[] = [];
@@ -782,9 +792,13 @@ export async function comprehensivePubMedSearch(
 
   const result = {
     articles,
-    systematicReviews: reviewsSearch,
+    systematicReviews: Array.isArray(reviewsSearch) ? reviewsSearch : [],
     guidelines,
   };
+
+  // #region debug log
+  fetch('http://127.0.0.1:7243/ingest/7927b0b4-4494-4712-9407-b89fa1704153', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'pubmed.ts:763', message: 'comprehensivePubMedSearch completed', data: { articles: articles.length, systematicReviews: reviewsSearch?.length || 0, guidelines: guidelines.length, total: articles.length + (reviewsSearch?.length || 0) + guidelines.length, timestamp: Date.now() }, timestamp: Date.now() }) }).catch(() => { });
+  // #endregion
 
   // PHASE 1 ENHANCEMENT: Cache the result
   // Error handling: If caching fails, continue anyway (graceful degradation)

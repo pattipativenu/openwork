@@ -19,9 +19,9 @@ fi
 # Check 2: Search for Gemini/Google API keys
 echo ""
 echo "✓ Checking for Gemini/Google API keys..."
-if git grep -qE "sk-(proj-)?[A-Za-z0-9]{10,}" 2>/dev/null; then
+if git grep -qE "['\"[:space:]]sk-(proj-)?[A-Za-z0-9]{20,}" -- ':!scripts/check-security.sh' 2>/dev/null; then
     echo "❌ ERROR: Gemini/Google API key found in tracked files!"
-    git grep -E "sk-(proj-)?[A-Za-z0-9]{10,}"
+    git grep -E "['\"[:space:]]sk-(proj-)?[A-Za-z0-9]{20,}" -- ':!scripts/check-security.sh'
     exit 1
 else
     echo "✅ No Gemini/Google API keys found"
@@ -30,9 +30,9 @@ fi
 # Check 3: Search for Tavily API keys
 echo ""
 echo "✓ Checking for Tavily API keys..."
-if git grep -q "tvly-" 2>/dev/null; then
+if git grep -q "tvly-" -- ':!scripts/check-security.sh' 2>/dev/null; then
     echo "❌ ERROR: Tavily API key found in tracked files!"
-    git grep "tvly-"
+    git grep "tvly-" -- ':!scripts/check-security.sh'
     exit 1
 else
     echo "✅ No Tavily API keys found"

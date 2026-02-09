@@ -168,7 +168,7 @@ export function useGemini(options: UseGeminiOptions): UseGeminiReturn {
         let assistantContent = '';
         let visualFindings: any[] = [];
         let medicalImages: any[] = [];
-        let model = 'gemini-2.0-pro-exp';
+        let model = 'gemini-3-flash-preview';
 
         // Only add assistant message to internal state if no external history is provided
         if (!history) {
@@ -284,7 +284,7 @@ export function useGemini(options: UseGeminiOptions): UseGeminiReturn {
           response: result.response || '',
           medicalImages: result.medicalImages || [],
           visualFindings: result.visualFindings || [],
-          model: result.model || 'gemini-2.0-pro-exp',
+          model: result.model || 'gemini-3-flash-preview',
         };
 
         console.log("🔍 DEBUG: useGemini returning:", {

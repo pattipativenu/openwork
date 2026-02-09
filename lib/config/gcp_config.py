@@ -62,21 +62,26 @@ class GeminiConfig:
     api_key: str = os.getenv('GEMINI_API_KEY', '')
     
     # Model Specifications - ONLY 3.0 Models
-    flash_model: str = os.getenv('GEMINI_FLASH_MODEL', 'gemini-3.0-flash-thinking-exp-01-21')
-    pro_model: str = os.getenv('GEMINI_PRO_MODEL', 'gemini-3.0-pro-exp-02-05')
+    flash_model: str = os.getenv('GEMINI_FLASH_MODEL', 'gemini-3-flash-preview')
+    pro_model: str = os.getenv('GEMINI_PRO_MODEL', 'gemini-3-pro-preview')
+
+    # Agent-Specific Model Assignments
+    # Agent 1: Query Intelligence - Uses Flash for speed and reasoning
+    agent_1_model: str = os.getenv('AGENT_1_MODEL', 'gemini-3-flash-preview')  # Query Intelligence
+    agent_5_model: str = os.getenv('AGENT_5_MODEL', 'gemini-3-pro-preview')  # Evidence Gap Analyzer
+    agent_6_model: str = os.getenv('AGENT_6_MODEL', 'gemini-3-pro-preview')  # Synthesis Engine (ALWAYS PRO)
+    agent_7_model: str = os.getenv('AGENT_7_MODEL', 'gemini-3-flash-preview')  # Verification Gate
+
+    # Embedding Model
     embedding_model: str = os.getenv('GEMINI_EMBEDDING_MODEL', 'text-embedding-004')
-    
-    # Agent-Specific Model Assignment
-    agent_1_model: str = os.getenv('AGENT_1_MODEL', 'gemini-3.0-flash-thinking-exp-01-21')  # Query Intelligence
-    agent_5_model: str = os.getenv('AGENT_5_MODEL', 'gemini-3.0-pro-exp-02-05')  # Evidence Gap Analyzer
-    agent_6_model: str = os.getenv('AGENT_6_MODEL', 'gemini-3.0-pro-exp-02-05')  # Synthesis Engine (ALWAYS PRO)
-    agent_7_model: str = os.getenv('AGENT_7_MODEL', 'gemini-3.0-flash-thinking-exp-01-21')  # Verification Gate
-    
+
     # Model Selection Rules
     use_pro_for_synthesis: bool = os.getenv('USE_PRO_FOR_SYNTHESIS', 'true').lower() == 'true'
     use_pro_for_complex_queries: bool = os.getenv('USE_PRO_FOR_COMPLEX_QUERIES', 'true').lower() == 'true'
     use_pro_for_contradictions: bool = os.getenv('USE_PRO_FOR_CONTRADICTIONS', 'true').lower() == 'true'
-    fallback_model: str = os.getenv('FALLBACK_MODEL', 'gemini-3.0-flash-thinking-exp-01-21')
+    
+    # Fallback Model
+    fallback_model: str = os.getenv('FALLBACK_MODEL', 'gemini-3-flash-preview')
     
     # Generation Configuration
     temperature: float = 0.2

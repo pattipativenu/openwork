@@ -37,7 +37,8 @@ export class EvidenceNormalizer {
       }
     }
 
-    // 2. PubMed (Evidence Engine)
+    // 2. PubMed (Evidence Engine) - CRITICAL: Always prioritize PubMed
+    let pubmedCount = 0;
     for (const doc of rawResults.pubmed) {
       const pmid = doc.pmid || doc.id;
       
@@ -48,6 +49,8 @@ export class EvidenceNormalizer {
         if (doc.pub_types?.includes('Randomized Controlled Trial')) badges.push('RCT');
         if (doc.pmcid) badges.push('PMCID');
         if (doc.pub_date && new Date(doc.pub_date).getFullYear() >= 2020) badges.push('Recent');
+        if (doc.journal_tier === 'tier_1') badges.push('Leading Journal');
+        if (doc.journal_tier === 'specialty_elite') badges.push('Specialty Elite');
 
         const candidate: EvidenceCandidate = {
           source: 'pubmed',
@@ -61,6 +64,7 @@ export class EvidenceNormalizer {
             doi: doc.doi,
             pmcid: doc.pmcid,
             pub_types: doc.pub_types,
+            journal_tier: doc.journal_tier, // Preserve journal tier for prioritization
             badges: badges
           },
           full_text_available: !!doc.pmcid
@@ -68,7 +72,14 @@ export class EvidenceNormalizer {
         
         candidates.push(candidate);
         seenIds.add(pmid);
+        pubmedCount++;
       }
+    }
+    
+    if (pubmedCount === 0 && rawResults.pubmed.length > 0) {
+      console.warn('⚠️ PubMed results found but none normalized - possible deduplication issue');
+    } else if (pubmedCount > 0) {
+      console.log(`✅ Normalized ${pubmedCount} PubMed articles (primary evidence source)`);
     }
 
     // 3. DailyMed (Evidence Engine)

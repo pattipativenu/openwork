@@ -59,17 +59,17 @@ export const GEMINI_CONFIG = {
   
   // Model Specifications - ONLY 3.0 Models
   models: {
-    flash: process.env.GEMINI_FLASH_MODEL! as 'gemini-3.0-flash-thinking-exp-01-21',
-    pro: process.env.GEMINI_PRO_MODEL! as 'gemini-3.0-pro-exp-02-05',
+    flash: process.env.GEMINI_FLASH_MODEL! as 'gemini-3-flash-preview',
+    pro: process.env.GEMINI_PRO_MODEL! as 'gemini-3-pro-preview',
     embedding: process.env.GEMINI_EMBEDDING_MODEL! as 'text-embedding-004',
   },
   
   // Agent-Specific Model Assignment
   agentModels: {
-    queryIntelligence: process.env.AGENT_1_MODEL! as 'gemini-3.0-flash-thinking-exp-01-21',
-    evidenceGapAnalyzer: process.env.AGENT_5_MODEL! as 'gemini-3.0-pro-exp-02-05',
-    synthesisEngine: process.env.AGENT_6_MODEL! as 'gemini-3.0-pro-exp-02-05', // ALWAYS PRO
-    verificationGate: process.env.AGENT_7_MODEL! as 'gemini-3.0-flash-thinking-exp-01-21',
+    queryIntelligence: process.env.AGENT_1_MODEL! as 'gemini-3-flash-preview',
+    evidenceGapAnalyzer: process.env.AGENT_5_MODEL! as 'gemini-3-pro-preview',
+    synthesisEngine: process.env.AGENT_6_MODEL! as 'gemini-3-pro-preview', // ALWAYS PRO
+    verificationGate: process.env.AGENT_7_MODEL! as 'gemini-3-flash-preview',
   },
   
   // Model Selection Rules
@@ -77,7 +77,7 @@ export const GEMINI_CONFIG = {
     useProForSynthesis: process.env.USE_PRO_FOR_SYNTHESIS === 'true',
     useProForComplexQueries: process.env.USE_PRO_FOR_COMPLEX_QUERIES === 'true',
     useProForContradictions: process.env.USE_PRO_FOR_CONTRADICTIONS === 'true',
-    fallbackModel: process.env.FALLBACK_MODEL! as 'gemini-3.0-flash-thinking-exp-01-21',
+    fallbackModel: process.env.FALLBACK_MODEL! as 'gemini-3-flash-preview',
   },
   
   // Generation Configuration

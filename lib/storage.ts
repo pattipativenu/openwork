@@ -28,7 +28,7 @@ export interface StoredConversation {
       description?: string;
     }>; // fetched educational images
   }>;
-  mode: 'doctor';
+  mode: 'doctor' | 'general';
   expiresAt: number; // Unix timestamp
 }
 

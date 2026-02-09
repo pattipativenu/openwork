@@ -725,7 +725,7 @@ export default function DoctorMode() {
   };
 
   return (
-    <div className="min-h-screen bg-white flex">
+    <div className="min-h-screen bg-cream flex">
       {/* Sidebar */}
       <Sidebar
         mode="doctor"
@@ -738,7 +738,7 @@ export default function DoctorMode() {
       {/* Main Content */}
       <div className={`flex-1 flex flex-col transition-all duration-300 ease-in-out ${sidebarOpen ? 'ml-[280px]' : 'ml-0'}`}>
         {/* Header - Sticky */}
-        <header className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm">
+        <header className="sticky top-0 z-50 bg-cream border-b border-gray-200 shadow-sm">
           <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
             <motion.div
               initial={{ opacity: 0, x: -20 }}
@@ -914,7 +914,7 @@ export default function DoctorMode() {
 
                 {/* Main Search Bar - Larger design matching the image */}
                 <div
-                  className={`relative bg-white border border-gray-300 rounded-2xl shadow-sm transition-all duration-300 focus-within:border-blue-400 focus-within:shadow-md ${isDragging ? "border-blue-400 shadow-blue-100" : "hover:border-gray-400"
+                  className={`relative bg-cream border border-gray-300 rounded-2xl shadow-sm transition-all duration-300 focus-within:border-blue-400 focus-within:shadow-md ${isDragging ? "border-blue-400 shadow-blue-100" : "hover:border-gray-400"
                     }`}
                   onDragOver={handleDragOver}
                   onDragLeave={handleDragLeave}
