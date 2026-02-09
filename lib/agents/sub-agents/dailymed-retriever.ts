@@ -8,6 +8,7 @@ import { TraceContext } from '../types';
 import { withRetrieverSpan, SpanStatusCode } from '../../otel';
 import { DAILYMED_RETRIEVER_SYSTEM_PROMPT } from '../system-prompts/dailymed-retriever-prompt';
 import { callGeminiWithRetry } from '../../utils/gemini-rate-limiter';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 
 export class DailyMedRetriever {
   private systemPrompt: string;
@@ -56,7 +57,7 @@ Normalized names:`;
             temperature: 0.1,
             maxOutputTokens: 150,
             thinkingConfig: {
-              thinkingLevel: 'minimal' // Fast drug name normalization
+              thinkingLevel: ThinkingLevel.MINIMAL // Fast drug name normalization
             }
           }
         });
@@ -106,7 +107,7 @@ Top 12 indices:`;
               temperature: 0.1,
               maxOutputTokens: 50,
               thinkingConfig: {
-                thinkingLevel: 'low' // Straightforward prioritization
+                thinkingLevel: ThinkingLevel.LOW // Straightforward prioritization
               }
             }
           });

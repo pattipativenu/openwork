@@ -11,12 +11,19 @@ interface ChatMessage {
   content: string;
 }
 
-// Initialize 7-Agent Medical Evidence Orchestrator (Primary System)
-const orchestrator = new MedicalEvidenceOrchestrator({
-  google_ai_api_key: process.env.GEMINI_API_KEY!,
-  ncbi_api_key: process.env.NCBI_API_KEY || '',
-  tavily_api_key: process.env.TAVILY_API_KEY || ''
-});
+// Initialize 7-Agent Medical Evidence Orchestrator (Primary System) - Lazy loaded
+let orchestrator: MedicalEvidenceOrchestrator | null = null;
+
+function getOrchestrator(): MedicalEvidenceOrchestrator {
+  if (!orchestrator) {
+    orchestrator = new MedicalEvidenceOrchestrator({
+      google_ai_api_key: process.env.GEMINI_API_KEY!,
+      ncbi_api_key: process.env.NCBI_API_KEY || '',
+      tavily_api_key: process.env.TAVILY_API_KEY || ''
+    });
+  }
+  return orchestrator!;
+}
 
 // Helper function to build references section for UI
 function buildReferencesSection(citations: any[]): string {
@@ -120,7 +127,7 @@ async function handleChatRequest(
     try {
       // Process query through 7-agent system
       console.log(`🔄 Processing query through orchestrator (Study Mode: ${isStudyMode})...`);
-      const evidenceResponse = await orchestrator.processQuery(message, sessionId, isStudyMode);
+      const evidenceResponse = await getOrchestrator().processQuery(message, sessionId, isStudyMode);
 
       console.log(`✅ Orchestrator completed:`, {
         synthesisLength: evidenceResponse.synthesis?.length || 0,

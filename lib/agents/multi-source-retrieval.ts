@@ -84,19 +84,19 @@ export class MultiSourceRetrievalCoordinator {
     );
 
     // 1. Guidelines Retriever - Use specialized queries from Agent 1
-    if (subAgentQueries.guidelines?.should_call && subAgentQueries.guidelines.rephrased_queries.length > 0) {
-      console.log(`📋 Guidelines: Using ${subAgentQueries.guidelines.rephrased_queries.length} specialized queries`);
+      if (subAgentQueries.guidelines?.should_call && (subAgentQueries.guidelines?.rephrased_queries?.length || 0) > 0) {
+        console.log(`📋 Guidelines: Using ${subAgentQueries.guidelines!.rephrased_queries.length} specialized queries`);
       // #region debug log
       fetch('http://127.0.0.1:7243/ingest/7927b0b4-4494-4712-9407-b89fa1704153',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'multi-source-retrieval.ts:85',message:'Sub-agent guidelines starting',data:{subAgent:'guidelines',timestamp:Date.now()},timestamp:Date.now()})}).catch(()=>{});
       // #endregion
       tasks.push(
         this.guidelines.search(
-          subAgentQueries.guidelines.rephrased_queries,
+          subAgentQueries.guidelines!.rephrased_queries,
           traceContext,
           originalQuery
         ).then(results => {
           // #region debug log
-          fetch('http://127.0.0.1:7243/ingest/7927b0b4-4494-4712-9407-b89fa1704153',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'multi-source-retrieval.ts:92',message:'Sub-agent guidelines completed',data:{subAgent:'guidelines',resultCount:results.result?.length||0,timestamp:Date.now()},timestamp:Date.now()})}).catch(()=>{});
+          fetch('http://127.0.0.1:7243/ingest/7927b0b4-4494-4712-9407-b89fa1704153', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'multi-source-retrieval.ts:92', message: 'Sub-agent guidelines completed', data: { subAgent: 'guidelines', resultCount: results.length || 0, timestamp: Date.now() }, timestamp: Date.now() }) }).catch(() => { });
           // #endregion
           return { type: 'guidelines', results };
         }).catch(err => {
@@ -114,14 +114,14 @@ export class MultiSourceRetrievalCoordinator {
     // CRITICAL FIX: PubMed should ALWAYS be called - it's the primary evidence source
     // Even if Agent 1 didn't route to it, we should still call it as a fallback
     const shouldCallPubMed = subAgentQueries.pubmed?.should_call !== false; // Default to true
-    const pubmedQueries = subAgentQueries.pubmed?.rephrased_queries.length > 0 
-      ? subAgentQueries.pubmed.rephrased_queries 
+      const pubmedQueries = (subAgentQueries.pubmed?.rephrased_queries?.length || 0) > 0
+        ? subAgentQueries.pubmed!.rephrased_queries 
       : searchStrategy.search_variants.slice(0, 3); // Fallback to search variants if no specialized queries
     
     if (shouldCallPubMed && pubmedQueries.length > 0) {
-      console.log(`🔬 PubMed: Using ${pubmedQueries.length} ${subAgentQueries.pubmed?.rephrased_queries.length > 0 ? 'specialized' : 'fallback'} queries with MeSH terms`);
+      console.log(`🔬 PubMed: Using ${pubmedQueries.length} ${subAgentQueries.pubmed?.rephrased_queries?.length ? 'specialized' : 'fallback'} queries with MeSH terms`);
       // #region debug log
-      fetch('http://127.0.0.1:7243/ingest/7927b0b4-4494-4712-9407-b89fa1704153',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'multi-source-retrieval.ts:100',message:'Sub-agent pubmed starting',data:{subAgent:'pubmed',queryCount:pubmedQueries.length,isFallback:subAgentQueries.pubmed?.rephrased_queries.length===0,timestamp:Date.now()},timestamp:Date.now()})}).catch(()=>{});
+      fetch('http://127.0.0.1:7243/ingest/7927b0b4-4494-4712-9407-b89fa1704153', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'multi-source-retrieval.ts:100', message: 'Sub-agent pubmed starting', data: { subAgent: 'pubmed', queryCount: pubmedQueries.length, isFallback: !(subAgentQueries.pubmed?.rephrased_queries?.length), timestamp: Date.now() }, timestamp: Date.now() }) }).catch(() => { });
       // #endregion
         const pubmedStartTime = Date.now();
         tasks.push(
@@ -133,9 +133,9 @@ export class MultiSourceRetrievalCoordinator {
               originalQuery
             ).then(results => {
               // #region debug log
-              fetch('http://127.0.0.1:7243/ingest/7927b0b4-4494-4712-9407-b89fa1704153',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'multi-source-retrieval.ts:107',message:'Sub-agent pubmed completed',data:{subAgent:'pubmed',resultCount:results.result?.length||0,elapsed:Date.now()-pubmedStartTime,timestamp:Date.now()},timestamp:Date.now()})}).catch(()=>{});
+              fetch('http://127.0.0.1:7243/ingest/7927b0b4-4494-4712-9407-b89fa1704153', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'multi-source-retrieval.ts:107', message: 'Sub-agent pubmed completed', data: { subAgent: 'pubmed', resultCount: results.length || 0, elapsed: Date.now() - pubmedStartTime, timestamp: Date.now() }, timestamp: Date.now() }) }).catch(() => { });
               // #endregion
-              if (!results.result || results.result.length === 0) {
+              if (!results || results.length === 0) {
                 console.warn('⚠️ PubMed returned no results - this may cause over-reliance on Tavily');
               }
               return { type: 'pubmed', results };
@@ -165,19 +165,19 @@ export class MultiSourceRetrievalCoordinator {
     }
 
     // 3. DailyMed Retriever - Use clean drug names from Agent 1
-    if (subAgentQueries.dailymed?.should_call && subAgentQueries.dailymed.drug_names.length > 0) {
-      console.log(`💊 DailyMed: Using ${subAgentQueries.dailymed.drug_names.length} clean drug names`);
+      if (subAgentQueries.dailymed?.should_call && (subAgentQueries.dailymed?.drug_names?.length || 0) > 0) {
+        console.log(`💊 DailyMed: Using ${subAgentQueries.dailymed!.drug_names.length} clean drug names`);
       // #region debug log
       fetch('http://127.0.0.1:7243/ingest/7927b0b4-4494-4712-9407-b89fa1704153',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'multi-source-retrieval.ts:116',message:'Sub-agent dailymed starting',data:{subAgent:'dailymed',timestamp:Date.now()},timestamp:Date.now()})}).catch(()=>{});
       // #endregion
       tasks.push(
         this.dailymedRetriever.search(
-          subAgentQueries.dailymed.drug_names,
+          subAgentQueries.dailymed!.drug_names,
           traceContext,
           originalQuery
         ).then(results => {
           // #region debug log
-          fetch('http://127.0.0.1:7243/ingest/7927b0b4-4494-4712-9407-b89fa1704153',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'multi-source-retrieval.ts:123',message:'Sub-agent dailymed completed',data:{subAgent:'dailymed',resultCount:results.result?.length||0,timestamp:Date.now()},timestamp:Date.now()})}).catch(()=>{});
+          fetch('http://127.0.0.1:7243/ingest/7927b0b4-4494-4712-9407-b89fa1704153', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'multi-source-retrieval.ts:123', message: 'Sub-agent dailymed completed', data: { subAgent: 'dailymed', resultCount: results.length || 0, timestamp: Date.now() }, timestamp: Date.now() }) }).catch(() => { });
           // #endregion
           return { type: 'dailymed', results };
         }).catch(err => {

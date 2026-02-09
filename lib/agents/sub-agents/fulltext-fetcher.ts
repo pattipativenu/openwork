@@ -7,6 +7,7 @@
 import { TraceContext } from '../types';
 import { withRetrieverSpan, SpanStatusCode } from '../../otel';
 import { FULLTEXT_FETCHER_SYSTEM_PROMPT } from '../system-prompts/fulltext-fetcher-prompt';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { callGeminiWithRetry } from '../../utils/gemini-rate-limiter';
 
 export interface FullTextSections {
@@ -119,7 +120,7 @@ Scores:`;
             temperature: 0.1,
             maxOutputTokens: 100,
             thinkingConfig: {
-              thinkingLevel: 'low' // Straightforward relevance scoring
+              thinkingLevel: ThinkingLevel.LOW // Straightforward relevance scoring
             }
           }
         });
