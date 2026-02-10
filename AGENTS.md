@@ -8,27 +8,7 @@
 
 OpenWork AI operates as a deterministic pipeline of AI agents, each specialized for a distinct cognitive task. The system avoids clinical recommendations, focusing instead on high-fidelity evidence extraction and synthesis.
 
-```mermaid
-flowchart TD
-    A[👤 User Query] --> B[🧠 Agent 1: Query Intelligence]
-    B --> C[🔄 Agent 2: Retrieval Coordinator]
-    
-    subgraph "Sub-Agents"
-    C --> C1[2.1: Guidelines]
-    C --> C2[2.2: PubMed]
-    C --> C3[2.3: Full-Text]
-    C --> C4[2.4: DailyMed]
-    C --> C5[2.5: Tavily]
-    end
-    
-    C1 & C2 & C3 & C4 --> D[🔧 Agent 3: Normalizer]
-    D --> E[🎯 Agent 4: Reranker]
-    E --> F[🔍 Agent 5: Gap Analyzer]
-    F -->|Conditional| C5
-    F --> G[✍️ Agent 6: Synthesis Engine]
-    G --> H[🔒 Agent 7: Verification Gate]
-    H --> I[📄 Verified Research Synthesis]
-```
+![Agent 1 & 2 Workflow](https://storage.googleapis.com/openwork-images/mermaid-diagram%20(sub-agents).png)
 
 ---
 
