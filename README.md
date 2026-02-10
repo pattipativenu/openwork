@@ -9,6 +9,8 @@
 
 OpenWork is a **research synthesis tool** specifically designed for healthcare professionals who need rapid access to high-quality medical evidence. It transforms hours of manual literature review into seconds of intelligent synthesis, acting as a research assistant that finds relevant articles from high-quality publications and circulations to provide summarized answers with inline citations.
 
+![OpenWork Dashboard](https://storage.googleapis.com/openwork-images/dashboard.png)
+
 ---
 
 ## 🎯 **What is OpenWork AI?**
@@ -34,7 +36,7 @@ OpenWork AI is designed to save time for health professionals by automating the 
 OpenWork AI operates through a sophisticated **7-agent system** powered by **Gemini 3.0** models. Each agent is specialized for a distinct stage of the research synthesis pipeline.
 
 ### **🔄 Architecture Flow Chart**
-![OpenWork AI Architecture Workflow](./public/workflow.png)
+![OpenWork AI Architecture Workflow](https://storage.googleapis.com/openwork-images/mermaid-diagram%20(sub-agents).png)
 
 ---
 
@@ -111,6 +113,20 @@ The codebase is modularly organized into a Next.js frontend for professional med
 - **🎓 Study & Learn Mode**: Interactive 5-question quizzes with evidence-based explanations.
 - **🚀 High Performance**: End-to-end synthesis in under 60 seconds (powered by Gemini 3 Flash/Pro).
 - **🩺 Professional UX**: Designed for rapid information access in clinical workflows.
+
+- **🩺 Professional UX**: Designed for rapid information access in clinical workflows.
+
+## ☁️ **Data Infrastructure**
+
+OpenWork leverages a robust Google Cloud implementation for handling medical data.
+
+### **Raw Guidelines Storage (GCS)**
+Indian medical guidelines are stored in raw format within secured Google Cloud Storage buckets.
+![Google Cloud Storage - Raw Guidelines](https://storage.googleapis.com/openwork-images/Screenshot%202026-02-09%20at%207.16.21%E2%80%AFpm.png)
+
+### **Vector Database (Firestore)**
+Processed guidelines are chunked and stored as vector embeddings in Firestore for semantic retrieval.
+![Firestore - Vector Embeddings](https://storage.googleapis.com/openwork-images/Screenshot%202026-02-09%20at%209.53.05%E2%80%AFpm.png)
 
 ---
 
