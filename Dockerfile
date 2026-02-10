@@ -27,8 +27,8 @@ COPY . .
 # Uncomment the following line in case you want to disable telemetry during the build.
 # ENV NEXT_TELEMETRY_DISABLED 1
 
-# Build the app to generate standalone output
-RUN NEXT_PRIVATE_STANDALONE=true npx next build --no-turbopack
+# Build the app with Webpack (Turbopack produces broken SSR chunks in Next.js 16)
+RUN NEXT_PRIVATE_STANDALONE=true npx next build --webpack
 
 # Production image, copy all the files and run next
 FROM base AS runner
@@ -54,10 +54,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 USER nextjs
 
-EXPOSE 3000
-
-ENV PORT 3000
-# set hostname to localhost
-ENV HOSTNAME "0.0.0.0"
+# Cloud Run uses port 8080; Next.js standalone reads process.env.PORT
+EXPOSE 8080
+ENV PORT=8080
+ENV HOSTNAME="0.0.0.0"
 
 CMD ["node", "server.js"]
