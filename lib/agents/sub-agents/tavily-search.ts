@@ -135,7 +135,7 @@ export class TavilySmartSearch {
 
       if (originalQuery) {
         try {
-          const medicalSourceBible = await import('../../../medical-source-bible');
+          const medicalSourceBible = await import('../../medical-source-bible');
           relevantSpecialties = medicalSourceBible.routeQueryToSpecialties(originalQuery);
 
       // STEP 2: Get specialty-specific domains from Medical Source Bible

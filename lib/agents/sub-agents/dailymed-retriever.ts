@@ -152,7 +152,7 @@ Top 12 indices:`;
       let relevantSpecialties: string[] = [];
       if (originalQuery) {
         try {
-          const { routeQueryToSpecialties } = await import('../../../medical-source-bible');
+          const { routeQueryToSpecialties } = await import('../../medical-source-bible');
           relevantSpecialties = routeQueryToSpecialties(originalQuery);
         } catch (error) {
           console.warn('Medical source bible import failed:', error);

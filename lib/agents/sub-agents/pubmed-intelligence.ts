@@ -168,7 +168,7 @@ Optimized PubMed query:`;
 
       if (originalQuery) {
         try {
-          const medicalSourceBible = await import('../../../medical-source-bible');
+          const medicalSourceBible = await import('../../medical-source-bible');
           relevantSpecialties = medicalSourceBible.routeQueryToSpecialties(originalQuery);
           TIER_1_GENERAL_JOURNALS_DATA = medicalSourceBible.TIER_1_GENERAL_JOURNALS;
           MEDICAL_SPECIALTIES_DATA = medicalSourceBible.MEDICAL_SPECIALTIES;
