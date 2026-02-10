@@ -63,10 +63,7 @@ export function Sidebar({ mode, onNewConversation, onSelectConversation, isOpen,
   // Load data on mount and set up refresh interval
   useEffect(() => {
     loadData();
-
-    // Refresh every 5 seconds to catch updates
-    const interval = setInterval(loadData, 5000);
-    return () => clearInterval(interval);
+    // Removed auto-refresh to prevent potential hanging on load
   }, [mode]);
 
   // Refresh data when sidebar opens

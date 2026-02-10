@@ -28,7 +28,7 @@ COPY . .
 # ENV NEXT_TELEMETRY_DISABLED 1
 
 # Build the app to generate standalone output
-RUN npm run build
+RUN NEXT_PRIVATE_STANDALONE=true npx next build --no-turbopack
 
 # Production image, copy all the files and run next
 FROM base AS runner

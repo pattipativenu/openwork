@@ -1,25 +1,28 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
+import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
-import { Brain, FileText, ImageIcon, Loader2, Search, Send, Sparkles, X, ChevronDown, ChevronRight, User, Settings, LogOut, FileIcon } from 'lucide-react';
+import { FileText, ImageIcon, Loader2, Search, Send, X, ChevronDown, FileIcon } from 'lucide-react';
 import { useGemini } from "@/hooks/useGemini";
 import { parseResponseIntoSections } from "@/lib/response-parser";
-import { EvidenceLogosScroll } from "@/components/ui/evidence-logos-scroll";
-import { ResponseActions } from "@/components/ui/response-actions";
-import { Sidebar } from "@/components/ui/sidebar";
-import { RotatingSuggestions } from "@/components/ui/rotating-suggestions";
-import { EvidenceLoadingCard } from "@/components/ui/evidence-loading-card";
-import { ImageLightbox } from "@/components/ui/image-lightbox";
-import { FormattedQuestion } from "@/components/ui/formatted-question";
-import { UnifiedResponseRenderer } from "@/components/ui/unified-response-renderer";
-import { UnifiedCitationRenderer } from "@/components/ui/unified-citation-renderer";
 import { RotatingText } from "@/components/ui/rotating-text";
-import { UnifiedReferenceSection } from "@/components/ui/unified-reference-section";
 import { parseResponse } from "@/lib/citation/unified-parser";
 import { DOCTOR_MODE_CAPABILITIES } from "@/lib/learn-more-capabilities";
 import { saveConversation, getConversationById } from "@/lib/storage";
-import StudyQuizRenderer from "@/components/ui/study-quiz-renderer";
+
+// Lazy load heavy components - only loaded after first interaction
+const EvidenceLogosScroll = dynamic(() => import("@/components/ui/evidence-logos-scroll").then(m => ({ default: m.EvidenceLogosScroll })), { ssr: false });
+const ResponseActions = dynamic(() => import("@/components/ui/response-actions").then(m => ({ default: m.ResponseActions })), { ssr: false });
+const Sidebar = dynamic(() => import("@/components/ui/sidebar").then(m => ({ default: m.Sidebar })), { ssr: false });
+const RotatingSuggestions = dynamic(() => import("@/components/ui/rotating-suggestions").then(m => ({ default: m.RotatingSuggestions })), { ssr: false });
+const EvidenceLoadingCard = dynamic(() => import("@/components/ui/evidence-loading-card").then(m => ({ default: m.EvidenceLoadingCard })), { ssr: false });
+const ImageLightbox = dynamic(() => import("@/components/ui/image-lightbox").then(m => ({ default: m.ImageLightbox })), { ssr: false });
+const FormattedQuestion = dynamic(() => import("@/components/ui/formatted-question").then(m => ({ default: m.FormattedQuestion })), { ssr: false });
+const UnifiedResponseRenderer = dynamic(() => import("@/components/ui/unified-response-renderer").then(m => ({ default: m.UnifiedResponseRenderer })), { ssr: false });
+const UnifiedCitationRenderer = dynamic(() => import("@/components/ui/unified-citation-renderer").then(m => ({ default: m.UnifiedCitationRenderer })), { ssr: false });
+const UnifiedReferenceSection = dynamic(() => import("@/components/ui/unified-reference-section").then(m => ({ default: m.UnifiedReferenceSection })), { ssr: false });
+const StudyQuizRenderer = dynamic(() => import("@/components/ui/study-quiz-renderer"), { ssr: false });
 
 interface MedicalImage {
   url: string;
@@ -621,9 +624,6 @@ export default function UnifiedDashboard() {
 
     window.addEventListener('followUpQuestion', handleFollowUpQuestion);
 
-    return () => {
-      window.removeEventListener('followUpQuestion', handleFollowUpQuestion);
-    };
     return () => {
       window.removeEventListener('followUpQuestion', handleFollowUpQuestion);
     };

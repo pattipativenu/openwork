@@ -188,3 +188,4 @@ Thumbs.db
 
 # Local development
 .local/
+env_vars_temp.yaml
