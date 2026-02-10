@@ -36,7 +36,7 @@ OpenWork AI is designed to save time for health professionals by automating the 
 OpenWork AI operates through a sophisticated **7-agent system** powered by **Gemini 3.0** models. Each agent is specialized for a distinct stage of the research synthesis pipeline.
 
 ### **🔄 Architecture Flow Chart**
-![OpenWork AI Architecture Workflow](https://storage.googleapis.com/openwork-images/mermaid-diagram%20(sub-agents).png)
+![OpenWork AI Architecture Workflow](https://storage.googleapis.com/openwork-images/Start%20Decision%20Options%20Flow-2026-02-10-024533.png)
 
 ---
 
@@ -50,6 +50,7 @@ OpenWork AI operates through a sophisticated **7-agent system** powered by **Gem
 - **Function**: Abbreviation expansion, intent classification, and routing to sub-agents.
 
 ### **Agent 2: Multi-Source Retrieval Coordinator**
+![OpenWork AI Multi-Source Retrieval Coordinator](https://storage.googleapis.com/openwork-images/mermaid-diagram%20(sub-agents).png)
 - **Technology**: Python Async Orchestrator
 - **Purpose**: Coordinates parallel evidence collection.
 - **Sub-Agents (2.1 to 2.5)**:
