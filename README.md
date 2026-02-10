@@ -9,6 +9,10 @@
 
 OpenWork is a **research synthesis tool** specifically designed for healthcare professionals who need rapid access to high-quality medical evidence. It transforms hours of manual literature review into seconds of intelligent synthesis, acting as a research assistant that finds relevant articles from high-quality publications and circulations to provide summarized answers with inline citations.
 
+### 🚀 **Live Demo & Video**
+- **Try the App**: [Detailed Research Interface (Cloud Run)](https://openwork-217388700222.us-central1.run.app/unified)
+- **Watch the Video**: [YouTube Walkthrough](https://youtu.be/e-dqS6pKJZM)
+
 ![OpenWork Dashboard](https://storage.googleapis.com/openwork-images/dashboard.png)
 
 ---
